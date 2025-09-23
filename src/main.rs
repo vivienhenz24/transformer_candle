@@ -16,11 +16,15 @@ fn main() -> Result<()> {
     println!("Transformer in Rust");
     println!("==========================================\n");
     
-    // Step 1: Device setup with CUDA detection
-    let device = setup_device()?;
-    println!("📱 Device: {:?}\n", device);
+    // Step 1: Check available backends and system info
+    check_available_backends();
+    println!();
     
-    // Step 2: Load and process Shakespeare text
+    // Step 2: Device setup with detailed debugging
+    let device = setup_device()?;
+    println!("📱 Final device selection: {:?}\n", device);
+    
+    // Step 3: Load and process Shakespeare text
     println!("Loading Shakespeare dataset");
     let data_path = "pt-data/input.txt";
     
@@ -34,11 +38,11 @@ fn main() -> Result<()> {
     let tokenizer = CharTokenizer::from_file(data_path, device.clone())
         .context("Failed to create tokenizer from Shakespeare data")?;
     
-    // Step 3: Display dataset statistics
+    // Step 4: Display dataset statistics
     println!("✅ Dataset loaded successfully!");
     tokenizer.print_stats();
     
-    // Step 4: Create GPT model with appropriate hyperparameters
+    // Step 5: Create GPT model with appropriate hyperparameters
     println!("\n🤖 Creating GPT model...");
     let gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
     
@@ -144,26 +148,112 @@ fn main() -> Result<()> {
 
 /// Setup compute device (prefer Metal on Apple, then CUDA, otherwise CPU)
 fn setup_device() -> Result<Device> {
-    if let Ok(device) = Device::new_metal(0) {
-        println!("🚀 Metal GPU detected and will be used for training");
-        return Ok(device);
+    println!("🔍 Starting device detection...");
+    
+    // Check for Metal support first (Apple Silicon/Intel Macs)
+    println!("🔍 Checking for Metal GPU support...");
+    match Device::new_metal(0) {
+        Ok(device) => {
+            println!("✅ Metal GPU detected successfully!");
+            println!("   Device type: {:?}", device);
+            println!("   Device info: {:?}", device);
+            println!("🚀 Metal GPU will be used for training");
+            return Ok(device);
+        }
+        Err(e) => {
+            println!("❌ Metal GPU detection failed:");
+            println!("   Error: {:?}", e);
+            println!("   This could mean:");
+            println!("   - Metal framework is not available");
+            println!("   - No Metal-compatible GPU found");
+            println!("   - Metal backend not compiled in candle-core");
+            println!("   - Running on non-Apple hardware");
+        }
     }
 
+    // Check for CUDA support
+    println!("\n🔍 Checking for CUDA GPU support...");
     match Device::cuda_if_available(0) {
         Ok(device) => {
+            println!("✅ CUDA device creation succeeded");
+            println!("   Device type: {:?}", device);
+            println!("   Is CUDA: {}", device.is_cuda());
+            
             if device.is_cuda() {
                 println!("🚀 CUDA GPU detected and will be used for training");
-                Ok(device)
+                return Ok(device);
             } else {
-                println!("💻 Using CPU for training (GPU not available)");
-                Ok(Device::Cpu)
+                println!("⚠️  CUDA device created but is_cuda() returned false");
+                println!("💻 Falling back to CPU for training");
+                return Ok(Device::Cpu);
             }
         }
-        Err(_) => {
-            println!("💻 Using CPU for training (no GPU backend available)");
-            Ok(Device::Cpu)
+        Err(e) => {
+            println!("❌ CUDA GPU detection failed:");
+            println!("   Error: {:?}", e);
+            println!("   This could mean:");
+            println!("   - CUDA is not installed");
+            println!("   - No CUDA-compatible GPU found");
+            println!("   - CUDA backend not compiled in candle-core");
+            println!("   - CUDA driver issues");
         }
     }
+
+    // Fallback to CPU
+    println!("\n💻 Using CPU for training (no GPU backend available)");
+    println!("   Available backends will be checked...");
+    
+    // Let's also check what backends are actually available
+    println!("🔍 Checking available device backends:");
+    println!("   CPU: Always available");
+    
+    // Try to get more info about why Metal failed
+    #[cfg(target_os = "macos")]
+    {
+        println!("   Metal: Checking system capabilities...");
+        // We could add more specific Metal checks here if needed
+    }
+    
+    Ok(Device::Cpu)
+}
+
+/// Check what backends are available and provide system information
+fn check_available_backends() {
+    println!("🔍 System Information:");
+    println!("   OS: {}", std::env::consts::OS);
+    println!("   Architecture: {}", std::env::consts::ARCH);
+    println!("   Family: {}", std::env::consts::FAMILY);
+    
+    // Check if we're on macOS (where Metal should be available)
+    #[cfg(target_os = "macos")]
+    {
+        println!("   Platform: macOS (Metal should be available)");
+        
+        // Try to get more system info
+        if let Ok(output) = std::process::Command::new("system_profiler")
+            .args(&["SPHardwareDataType"])
+            .output()
+        {
+            if let Ok(hardware_info) = String::from_utf8(output.stdout) {
+                for line in hardware_info.lines() {
+                    if line.contains("Chip") || line.contains("Processor") || line.contains("Model") {
+                        println!("   Hardware: {}", line.trim());
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("   Platform: Non-macOS (Metal not available)");
+    }
+    
+    // Check candle-core features
+    println!("\n🔍 Candle-core backend availability:");
+    println!("   CPU: Always available");
+    println!("   Metal: Checking at runtime (feature detection not available)");
+    println!("   CUDA: Checking at runtime (feature detection not available)");
 }
 
 /// Generate various text samples to demonstrate the trained model
