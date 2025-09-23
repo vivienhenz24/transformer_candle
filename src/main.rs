@@ -1,7 +1,10 @@
 mod tokenizer;
+mod gpt;
 
-use candle_core::Device;
+use candle_core::{Device, DType};
+use candle_nn::VarMap;
 use tokenizer::{CharTokenizer, DataSplit};
+use gpt::{Head, MultiHeadAttention};
 
 fn main() -> anyhow::Result<()> {
     println!("🚀 Character-level Transformer in Rust!");
@@ -11,7 +14,7 @@ fn main() -> anyhow::Result<()> {
     
     // Create tokenizer from the Shakespeare data
     println!("📚 Loading Shakespeare data...");
-    let tokenizer = CharTokenizer::from_file("pt-data/input.txt", device)?;
+    let tokenizer = CharTokenizer::from_file("pt-data/input.txt", device.clone())?;
     
     // Print tokenizer statistics
     tokenizer.print_stats();
@@ -53,6 +56,68 @@ fn main() -> anyhow::Result<()> {
         Err(e) => println!("  Error generating batch: {}", e),
     }
     
-    println!("\n✅ Tokenizer implementation complete!");
+    // Test attention head implementation
+    println!("\n🧠 Testing attention head implementation:");
+    let varmap = VarMap::new();
+    let vb = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    
+    // Create a single attention head
+    let n_embd = 64;  // Embedding dimension
+    let head_size = 16; // Head size
+    let block_size = 32; // Block size
+    let dropout_rate = 0.1;
+    
+    match Head::new(n_embd, head_size, block_size, dropout_rate, vb.pp("test_head")) {
+        Ok(head) => {
+            println!("  ✅ Single attention head created successfully");
+            println!("     - Embedding dim: {}", n_embd);
+            println!("     - Head size: {}", head_size);
+            println!("     - Block size: {}", block_size);
+            
+            // Test with dummy input
+            let batch_size = 2;
+            let seq_len = 8;
+            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
+            
+            match head.forward(&dummy_input, false) {
+                Ok(output) => {
+                    println!("  ✅ Forward pass successful");
+                    println!("     - Input shape: {:?}", dummy_input.shape());
+                    println!("     - Output shape: {:?}", output.shape());
+                }
+                Err(e) => println!("  ❌ Forward pass failed: {}", e),
+            }
+        }
+        Err(e) => println!("  ❌ Head creation failed: {}", e),
+    }
+    
+    // Test multi-head attention
+    println!("\n🔄 Testing multi-head attention:");
+    let n_head = 4;
+    let vb_mha = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    
+    match MultiHeadAttention::new(n_embd, n_head, block_size, dropout_rate, vb_mha.pp("test_mha")) {
+        Ok(mha) => {
+            println!("  ✅ Multi-head attention created successfully");
+            println!("     - Number of heads: {}", n_head);
+            println!("     - Head size: {}", n_embd / n_head);
+            
+            let batch_size = 2;
+            let seq_len = 8;
+            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
+            
+            match mha.forward(&dummy_input, false) {
+                Ok(output) => {
+                    println!("  ✅ Multi-head forward pass successful");
+                    println!("     - Input shape: {:?}", dummy_input.shape());
+                    println!("     - Output shape: {:?}", output.shape());
+                }
+                Err(e) => println!("  ❌ Multi-head forward pass failed: {}", e),
+            }
+        }
+        Err(e) => println!("  ❌ Multi-head attention creation failed: {}", e),
+    }
+    
+    println!("\n✅ Attention implementation complete!");
     Ok(())
 }
