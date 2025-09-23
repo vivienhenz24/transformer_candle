@@ -62,8 +62,8 @@ fn main() -> anyhow::Result<()> {
     let vb = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
     
     // Create a single attention head
-    let n_embd = 64;  // Embedding dimension
-    let head_size = 16; // Head size
+    let n_embd = 72;  // Embedding dimension (divisible by 6 for 6-head test)
+    let head_size = 12; // Head size for single head test
     let block_size = 32; // Block size
     let dropout_rate = 0.1;
     
@@ -91,9 +91,9 @@ fn main() -> anyhow::Result<()> {
         Err(e) => println!("  ❌ Head creation failed: {}", e),
     }
     
-    // Test multi-head attention
+    // Test multi-head attention with 6 heads (as requested)
     println!("\n🔄 Testing multi-head attention:");
-    let n_head = 4;
+    let n_head = 6;  // Testing with 6 heads as specifically requested
     let vb_mha = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
     
     match MultiHeadAttention::new(n_embd, n_head, block_size, dropout_rate, vb_mha.pp("test_mha")) {
@@ -111,6 +111,22 @@ fn main() -> anyhow::Result<()> {
                     println!("  ✅ Multi-head forward pass successful");
                     println!("     - Input shape: {:?}", dummy_input.shape());
                     println!("     - Output shape: {:?}", output.shape());
+                    
+                    // Verify shape preservation: input and output should have same shape
+                    if dummy_input.shape() == output.shape() {
+                        println!("  ✅ Shape preservation confirmed: (batch, time, channels) preserved");
+                    } else {
+                        println!("  ❌ Shape mismatch detected");
+                    }
+                    
+                    // Test with training mode (to test dropout)
+                    match mha.forward(&dummy_input, true) {
+                        Ok(train_output) => {
+                            println!("  ✅ Training mode forward pass successful");
+                            println!("     - Training output shape: {:?}", train_output.shape());
+                        }
+                        Err(e) => println!("  ❌ Training mode failed: {}", e),
+                    }
                 }
                 Err(e) => println!("  ❌ Multi-head forward pass failed: {}", e),
             }

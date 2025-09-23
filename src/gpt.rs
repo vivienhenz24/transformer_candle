@@ -229,4 +229,30 @@ mod tests {
         let mha = MultiHeadAttention::new(512, 8, 128, 0.1, vb).unwrap();
         assert_eq!(mha.heads.len(), 8);
     }
+    
+    #[test]
+    fn test_six_head_attention() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        
+        // Test with 6 heads as specifically requested
+        let n_embd = 72;  // Divisible by 6
+        let n_head = 6;
+        let mha = MultiHeadAttention::new(n_embd, n_head, 128, 0.1, vb).unwrap();
+        
+        assert_eq!(mha.heads.len(), 6);
+        
+        // Test forward pass with shape preservation
+        let batch_size = 2;
+        let seq_len = 10;
+        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
+            .unwrap().to_dtype(DType::F32).unwrap();
+        
+        let output = mha.forward(&input, false).unwrap();
+        
+        // Verify input and output shapes match
+        assert_eq!(input.shape(), output.shape());
+        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
+    }
 }
