@@ -13,7 +13,7 @@ use training::{TrainingConfig, train_model, create_medium_gpt_config};
 
 /// Main function that orchestrates the complete GPT training and text generation pipeline
 fn main() -> Result<()> {
-    println!("🚀 Character-level GPT Transformer in Rust");
+    println!("Transformer in Rust");
     println!("==========================================\n");
     
     // Step 1: Device setup with CUDA detection
@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     println!("📱 Device: {:?}\n", device);
     
     // Step 2: Load and process Shakespeare text
-    println!("📚 Loading Shakespeare dataset...");
+    println!("Loading Shakespeare dataset");
     let data_path = "pt-data/input.txt";
     
     if !Path::new(data_path).exists() {
@@ -51,8 +51,8 @@ fn main() -> Result<()> {
     
     // Step 5: Print model information
     let param_count = model.count_parameters();
-    println!("✅ GPT model created successfully!");
-    println!("   📊 Model Statistics:");
+    println!("GPT model created successfully!");
+    println!("    Model Statistics:");
     println!("      - Vocabulary size: {}", gpt_config.vocab_size);
     println!("      - Block size (context): {}", gpt_config.block_size);
     println!("      - Embedding dimension: {}", gpt_config.n_embd);
@@ -80,10 +80,10 @@ fn main() -> Result<()> {
     println!("      - Evaluation interval: {}", training_config.eval_interval);
     
     // Step 7: Validate data splits
-    println!("\n📊 Validating data splits...");
+    println!("\n Validating data splits...");
     match tokenizer.get_batch(DataSplit::Train, 4, training_config.block_size) {
         Ok((inputs, targets)) => {
-            println!("✅ Training data: {} batches available", inputs.shape().dims()[0]);
+            println!(" Training data: {} batches available", inputs.shape().dims()[0]);
             println!("   - Input shape: {:?}", inputs.shape());
             println!("   - Target shape: {:?}", targets.shape());
         }
@@ -94,7 +94,7 @@ fn main() -> Result<()> {
     
     match tokenizer.get_batch(DataSplit::Val, 4, training_config.block_size) {
         Ok((inputs, targets)) => {
-            println!("✅ Validation data: {} batches available", inputs.shape().dims()[0]);
+            println!(" Validation data: {} batches available", inputs.shape().dims()[0]);
             println!("   - Input shape: {:?}", inputs.shape());
             println!("   - Target shape: {:?}", targets.shape());
         }
@@ -104,17 +104,17 @@ fn main() -> Result<()> {
     }
     
     // Step 8: Run training loop
-    println!("\n🚀 Starting training...");
+    println!("\n Starting training...");
     println!("====================================");
     
     let training_stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
         .context("Training failed")?;
     
     println!("====================================");
-    println!("✅ Training completed successfully!");
+    println!(" Training completed successfully!");
     
     if let Some(final_stats) = training_stats.last() {
-        println!("📊 Final Training Statistics:");
+        println!(" Final Training Statistics:");
         println!("   - Final training loss: {:.4}", final_stats.train_loss);
         println!("   - Final validation loss: {:.4}", final_stats.val_loss);
         println!("   - Average tokens/sec: {:.0}", final_stats.tokens_per_sec);
@@ -123,21 +123,21 @@ fn main() -> Result<()> {
     }
     
     // Step 9: Generate text samples
-    println!("\n🎯 Generating text samples...");
+    println!("\n Generating text samples...");
     println!("=====================================");
     
     generate_text_samples(&model, &tokenizer, &device)
         .context("Text generation failed")?;
     
     // Step 10: Final summary
-    println!("\n🎉 GPT Training and Generation Complete!");
+    println!("\n GPT Training and Generation Complete.");
     println!("========================================");
-    println!("✅ Successfully completed all steps:");
-    println!("   1. ✅ Loaded Shakespeare dataset ({} characters)", tokenizer.vocab_size);
-    println!("   2. ✅ Created and configured GPT model ({} parameters)", param_count);
-    println!("   3. ✅ Trained model for {} iterations", training_config.max_iters);
-    println!("   4. ✅ Generated text samples with trained model");
-    println!("\n🚀 Ready for production use or further training!");
+    println!(" Successfully completed all steps:");
+    println!("   1. Loaded Shakespeare dataset ({} characters)", tokenizer.vocab_size);
+    println!("   2. Created and configured GPT model ({} parameters)", param_count);
+    println!("   3. Trained model for {} iterations", training_config.max_iters);
+    println!("   4. Generated text samples with trained model");
+    println!("\n Ready for production use or further training!");
     
     Ok(())
 }
@@ -148,10 +148,10 @@ fn setup_device() -> Result<Device> {
     match Device::cuda_if_available(0) {
         Ok(device) => {
             if device.is_cuda() {
-                println!("🚀 CUDA GPU detected and will be used for training");
+                println!(" CUDA GPU detected and will be used for training");
                 Ok(device)
             } else {
-                println!("💻 Using CPU for training (CUDA not available)");
+                println!("Using CPU for training (CUDA not available)");
                 Ok(Device::Cpu)
             }
         }
