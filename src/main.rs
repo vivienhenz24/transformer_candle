@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     tokenizer.print_stats();
     
     // Step 5: Create GPT model with appropriate hyperparameters
-    println!("\n🤖 Creating GPT model...");
+    println!("\n Creating GPT model...");
     let gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
     
     // Create variable map for model parameters
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     println!("      - Dropout rate: {}", gpt_config.dropout_rate);
     
     // Step 6: Configure training parameters
-    println!("\n🏋️ Setting up training configuration...");
+    println!("\n Setting up training configuration...");
     let mut training_config = TrainingConfig::default();
     training_config.device = device.clone();
     training_config.block_size = gpt_config.block_size;
@@ -76,7 +76,7 @@ fn main() -> Result<()> {
     training_config.eval_iters = 50;
     training_config.learning_rate = 3e-4; // Conservative learning rate
     
-    println!("✅ Training configuration:");
+    println!(" Training configuration:");
     println!("      - Learning rate: {}", training_config.learning_rate);
     println!("      - Batch size: {}", training_config.batch_size);
     println!("      - Block size: {}", training_config.block_size);
@@ -148,20 +148,20 @@ fn main() -> Result<()> {
 
 /// Setup compute device (prefer Metal on Apple, then CUDA, otherwise CPU)
 fn setup_device() -> Result<Device> {
-    println!("🔍 Starting device detection...");
+    println!("Starting device detection...");
     
     // Check for Metal support first (Apple Silicon/Intel Macs)
-    println!("🔍 Checking for Metal GPU support...");
+    println!("Checking for Metal GPU support...");
     match Device::new_metal(0) {
         Ok(device) => {
-            println!("✅ Metal GPU detected successfully!");
+            println!("Metal GPU detected successfully!");
             println!("   Device type: {:?}", device);
             println!("   Device info: {:?}", device);
-            println!("🚀 Metal GPU will be used for training");
+            println!("Metal GPU will be used for training");
             return Ok(device);
         }
         Err(e) => {
-            println!("❌ Metal GPU detection failed:");
+            println!("Metal GPU detection failed:");
             println!("   Error: {:?}", e);
             println!("   This could mean:");
             println!("   - Metal framework is not available");
@@ -175,21 +175,21 @@ fn setup_device() -> Result<Device> {
     println!("\n🔍 Checking for CUDA GPU support...");
     match Device::cuda_if_available(0) {
         Ok(device) => {
-            println!("✅ CUDA device creation succeeded");
+            println!("CUDA device creation succeeded");
             println!("   Device type: {:?}", device);
             println!("   Is CUDA: {}", device.is_cuda());
             
             if device.is_cuda() {
-                println!("🚀 CUDA GPU detected and will be used for training");
+                println!("CUDA GPU detected and will be used for training");
                 return Ok(device);
             } else {
-                println!("⚠️  CUDA device created but is_cuda() returned false");
-                println!("💻 Falling back to CPU for training");
+                println!(" CUDA device created but is_cuda() returned false");
+                println!("Falling back to CPU for training");
                 return Ok(Device::Cpu);
             }
         }
         Err(e) => {
-            println!("❌ CUDA GPU detection failed:");
+            println!("CUDA GPU detection failed:");
             println!("   Error: {:?}", e);
             println!("   This could mean:");
             println!("   - CUDA is not installed");
@@ -200,11 +200,11 @@ fn setup_device() -> Result<Device> {
     }
 
     // Fallback to CPU
-    println!("\n💻 Using CPU for training (no GPU backend available)");
+    println!("\n Using CPU for training (no GPU backend available)");
     println!("   Available backends will be checked...");
     
     // Let's also check what backends are actually available
-    println!("🔍 Checking available device backends:");
+    println!(" Checking available device backends:");
     println!("   CPU: Always available");
     
     // Try to get more info about why Metal failed
@@ -219,7 +219,7 @@ fn setup_device() -> Result<Device> {
 
 /// Check what backends are available and provide system information
 fn check_available_backends() {
-    println!("🔍 System Information:");
+    println!(" System Information:");
     println!("   OS: {}", std::env::consts::OS);
     println!("   Architecture: {}", std::env::consts::ARCH);
     println!("   Family: {}", std::env::consts::FAMILY);
@@ -250,7 +250,7 @@ fn check_available_backends() {
     }
     
     // Check candle-core features
-    println!("\n🔍 Candle-core backend availability:");
+    println!("\n Candle-core backend availability:");
     println!("   CPU: Always available");
     println!("   Metal: Checking at runtime (feature detection not available)");
     println!("   CUDA: Checking at runtime (feature detection not available)");
@@ -273,7 +273,7 @@ fn generate_text_samples(
     println!("Generating 500 tokens for various prompts:\n");
     
     for (i, prompt) in prompts.iter().enumerate() {
-        println!("📝 Sample {} - Prompt: \"{}\"", i + 1, prompt);
+        println!("Sample {} - Prompt: \"{}\"", i + 1, prompt);
         println!("{}", "-".repeat(60));
         
         match generate_single_sample(model, tokenizer, prompt, 500) {
@@ -282,7 +282,7 @@ fn generate_text_samples(
                 println!("\n{}\n", "=".repeat(60));
             }
             Err(e) => {
-                println!("❌ Failed to generate text for prompt '{}': {}", prompt, e);
+                println!("Failed to generate text for prompt '{}': {}", prompt, e);
                 println!("{}\n", "=".repeat(60));
             }
         }

@@ -112,7 +112,7 @@ pub fn train_model(
     _varmap: &mut VarMap,
     config: &TrainingConfig,
 ) -> CandleResult<Vec<TrainingStats>> {
-    println!("🚀 Starting GPT training...");
+    println!("Starting GPT training...");
     println!("Training Configuration:");
     println!("  Learning rate: {}", config.learning_rate);
     println!("  Batch size: {}", config.batch_size);
@@ -130,7 +130,7 @@ pub fn train_model(
     let mut last_log_time = training_start;
     let mut tokens_processed = 0;
     
-    println!("🎯 Training Progress:");
+    println!(" Training Progress:");
     println!("{:>6} | {:>10} | {:>10} | {:>8} | {:>10} | {:>8}", 
              "Iter", "Train Loss", "Val Loss", "LR", "Tok/sec", "Time");
     println!("{}", "-".repeat(70));
@@ -211,14 +211,14 @@ pub fn train_model(
         
         // Handle training interruption gracefully
         if iter > 0 && iter % 1000 == 0 {
-            println!("📊 Checkpoint at iteration {}: Train loss = {:.4}", iter, train_loss);
+            println!("Checkpoint at iteration {}: Train loss = {:.4}", iter, train_loss);
         }
     }
     
     let total_time = training_start.elapsed().as_secs_f32();
     let avg_tokens_per_sec = tokens_processed as f32 / total_time;
     
-    println!("\n🎉 Training completed!");
+    println!("\n Training completed!");
     println!("Total time: {:.1}s", total_time);
     println!("Average tokens/sec: {:.0}", avg_tokens_per_sec);
     println!("Total tokens processed: {}", tokens_processed);
