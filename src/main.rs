@@ -4,7 +4,7 @@ mod gpt;
 use candle_core::{Device, DType};
 use candle_nn::VarMap;
 use tokenizer::{CharTokenizer, DataSplit};
-use gpt::{Head, MultiHeadAttention};
+use gpt::{Head, MultiHeadAttention, FeedForward};
 
 fn main() -> anyhow::Result<()> {
     println!("🚀 Character-level Transformer in Rust!");
@@ -134,6 +134,50 @@ fn main() -> anyhow::Result<()> {
         Err(e) => println!("  ❌ Multi-head attention creation failed: {}", e),
     }
     
-    println!("\n✅ Attention implementation complete!");
+    // Test feed-forward network
+    println!("\n🧮 Testing feed-forward network:");
+    let vb_ff = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    
+    match FeedForward::new(n_embd, dropout_rate, vb_ff.pp("test_ff")) {
+        Ok(ff) => {
+            println!("  ✅ FeedForward network created successfully");
+            println!("     - Input dimension: {}", n_embd);
+            println!("     - Internal expansion: {} (4x)", 4 * n_embd);
+            println!("     - Output dimension: {}", n_embd);
+            
+            let batch_size = 2;
+            let seq_len = 8;
+            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
+            
+            match ff.forward(&dummy_input, false) {
+                Ok(output) => {
+                    println!("  ✅ Forward pass successful");
+                    println!("     - Input shape: {:?}", dummy_input.shape());
+                    println!("     - Output shape: {:?}", output.shape());
+                    
+                    // Verify shape preservation
+                    if dummy_input.shape() == output.shape() {
+                        println!("  ✅ Shape preservation confirmed: (batch, time, channels) preserved");
+                    } else {
+                        println!("  ❌ Shape mismatch detected");
+                    }
+                    
+                    // Test training mode with dropout
+                    match ff.forward(&dummy_input, true) {
+                        Ok(train_output) => {
+                            println!("  ✅ Training mode (with dropout) successful");
+                            println!("     - Training output shape: {:?}", train_output.shape());
+                        }
+                        Err(e) => println!("  ❌ Training mode failed: {}", e),
+                    }
+                }
+                Err(e) => println!("  ❌ Forward pass failed: {}", e),
+            }
+        }
+        Err(e) => println!("  ❌ FeedForward creation failed: {}", e),
+    }
+    
+    println!("\n✅ Complete transformer components implemented!");
+    println!("🔧 Ready for transformer block assembly!");
     Ok(())
 }

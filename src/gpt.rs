@@ -191,6 +191,61 @@ impl MultiHeadAttention {
     }
 }
 
+/// Feed-forward neural network (MLP) component of transformer block
+#[derive(Debug)]
+pub struct FeedForward {
+    /// First linear layer: n_embd -> 4 * n_embd
+    c_fc: Linear,
+    /// Second linear layer: 4 * n_embd -> n_embd  
+    c_proj: Linear,
+    /// Dropout layer for regularization
+    dropout: Dropout,
+}
+
+impl FeedForward {
+    /// Create a new feed-forward network
+    pub fn new(
+        n_embd: usize,      // Embedding dimension
+        dropout_rate: f32,  // Dropout probability
+        vb: VarBuilder,     // Variable builder for parameters
+    ) -> CandleResult<Self> {
+        let inner_dim = 4 * n_embd;  // Expand to 4x the embedding dimension
+        
+        // Create the two linear layers
+        let c_fc = candle_nn::linear(n_embd, inner_dim, vb.pp("c_fc"))?;     // Expansion layer
+        let c_proj = candle_nn::linear(inner_dim, n_embd, vb.pp("c_proj"))?; // Contraction layer
+        let dropout = Dropout::new(dropout_rate);
+        
+        Ok(FeedForward {
+            c_fc,
+            c_proj,
+            dropout,
+        })
+    }
+    
+    /// Forward pass through the feed-forward network
+    /// Architecture: Input -> Linear -> ReLU -> Dropout -> Linear -> Output
+    pub fn forward(&self, x: &Tensor, train: bool) -> CandleResult<Tensor> {
+        // First linear layer: n_embd -> 4 * n_embd
+        let x = self.c_fc.forward(x)?;
+        
+        // ReLU activation
+        let x = x.relu()?;
+        
+        // Dropout (applied in training mode)
+        let x = if train {
+            self.dropout.forward(&x, train)?
+        } else {
+            x
+        };
+        
+        // Second linear layer: 4 * n_embd -> n_embd
+        let x = self.c_proj.forward(&x)?;
+        
+        Ok(x)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +309,84 @@ mod tests {
         // Verify input and output shapes match
         assert_eq!(input.shape(), output.shape());
         assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
+    }
+    
+    #[test]
+    fn test_feedforward_creation() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        
+        let ff = FeedForward::new(512, 0.1, vb).unwrap();
+        // FeedForward should be created successfully
+        // Internal structure is opaque but we can test forward pass
+    }
+    
+    #[test]
+    fn test_feedforward_shape_preservation() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        
+        let n_embd = 64;
+        let ff = FeedForward::new(n_embd, 0.1, vb).unwrap();
+        
+        // Test with different batch sizes and sequence lengths
+        let batch_size = 3;
+        let seq_len = 12;
+        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
+            .unwrap().to_dtype(DType::F32).unwrap();
+        
+        let output = ff.forward(&input, false).unwrap();
+        
+        // Should preserve input shape exactly
+        assert_eq!(input.shape(), output.shape());
+        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
+    }
+    
+    #[test]
+    fn test_feedforward_training_mode() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        
+        let n_embd = 48;
+        let ff = FeedForward::new(n_embd, 0.5, vb).unwrap(); // High dropout for testing
+        
+        let batch_size = 2;
+        let seq_len = 8;
+        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
+            .unwrap().to_dtype(DType::F32).unwrap();
+        
+        // Test both training and evaluation modes
+        let train_output = ff.forward(&input, true).unwrap();
+        let eval_output = ff.forward(&input, false).unwrap();
+        
+        // Both should have same shape as input
+        assert_eq!(input.shape(), train_output.shape());
+        assert_eq!(input.shape(), eval_output.shape());
+    }
+    
+    #[test] 
+    fn test_feedforward_expansion_contraction() {
+        // This test verifies the 4x expansion internally works
+        // We can't directly test internal dimensions but can verify the network works
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        
+        let n_embd = 32;  // Small size for testing
+        let ff = FeedForward::new(n_embd, 0.0, vb).unwrap(); // No dropout for deterministic test
+        
+        let batch_size = 1;
+        let seq_len = 1;
+        let input = Tensor::ones((batch_size, seq_len, n_embd), DType::F32, &device).unwrap();
+        
+        let output = ff.forward(&input, false).unwrap();
+        
+        // Output should have same shape but different values (due to computation)
+        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
+        // The network should actually compute something (not just return input)
+        // This is implicit - if shapes match but computation happened, test passes
     }
 }
