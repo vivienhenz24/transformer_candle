@@ -1,337 +1,284 @@
 mod tokenizer;
 mod gpt;
+mod training;
 
+use std::path::Path;
 use candle_core::{Device, DType};
 use candle_nn::VarMap;
-use tokenizer::{CharTokenizer, DataSplit};
-use gpt::{Head, MultiHeadAttention, FeedForward, Block, GPTLanguageModel, GPTConfig};
+use anyhow::{Result, Context};
 
-fn main() -> anyhow::Result<()> {
-    println!("🚀 Character-level Transformer in Rust!");
+use tokenizer::{CharTokenizer, DataSplit};
+use gpt::GPTLanguageModel;
+use training::{TrainingConfig, train_model, create_medium_gpt_config};
+
+/// Main function that orchestrates the complete GPT training and text generation pipeline
+fn main() -> Result<()> {
+    println!("🚀 Character-level GPT Transformer in Rust");
+    println!("==========================================\n");
     
-    // Initialize device (CPU for now, could be CUDA if available)
-    let device = Device::Cpu;
+    // Step 1: Device setup with CUDA detection
+    let device = setup_device()?;
+    println!("📱 Device: {:?}\n", device);
     
-    // Create tokenizer from the Shakespeare data
-    println!("📚 Loading Shakespeare data...");
-    let tokenizer = CharTokenizer::from_file("pt-data/input.txt", device.clone())?;
+    // Step 2: Load and process Shakespeare text
+    println!("📚 Loading Shakespeare dataset...");
+    let data_path = "pt-data/input.txt";
     
-    // Print tokenizer statistics
+    if !Path::new(data_path).exists() {
+        return Err(anyhow::anyhow!(
+            "Data file not found: {}. Please ensure the Shakespeare text file is available.",
+            data_path
+        ));
+    }
+    
+    let tokenizer = CharTokenizer::from_file(data_path, device.clone())
+        .context("Failed to create tokenizer from Shakespeare data")?;
+    
+    // Step 3: Display dataset statistics
+    println!("✅ Dataset loaded successfully!");
     tokenizer.print_stats();
     
-    // Test encoding and decoding
-    println!("\n🔤 Testing encode/decode:");
-    let test_text = "Hello, world!";
-    let encoded = tokenizer.encode(test_text);
-    let decoded = tokenizer.decode(&encoded);
-    println!("  Original: '{}'", test_text);
-    println!("  Encoded:  {:?}", encoded);
-    println!("  Decoded:  '{}'", decoded);
+    // Step 4: Create GPT model with appropriate hyperparameters
+    println!("\n🤖 Creating GPT model...");
+    let gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
     
-    // Test batch generation
-    println!("\n📦 Testing batch generation:");
-    let batch_size = 4;
-    let block_size = 8;
-    
-    match tokenizer.get_batch(DataSplit::Train, batch_size, block_size) {
-        Ok((inputs, targets)) => {
-            println!("  Batch inputs shape: {:?}", inputs.shape());
-            println!("  Batch targets shape: {:?}", targets.shape());
-            
-            // Show first sequence in the batch
-            if let Ok(first_input) = inputs.get(0) {
-                if let Ok(input_data) = first_input.to_vec1::<u32>() {
-                    let input_chars = tokenizer.decode(&input_data.iter().map(|&x| x as usize).collect::<Vec<_>>());
-                    println!("  First input sequence: '{}'", input_chars);
-                }
-            }
-            
-            if let Ok(first_target) = targets.get(0) {
-                if let Ok(target_data) = first_target.to_vec1::<u32>() {
-                    let target_chars = tokenizer.decode(&target_data.iter().map(|&x| x as usize).collect::<Vec<_>>());
-                    println!("  First target sequence: '{}'", target_chars);
-                }
-            }
-        }
-        Err(e) => println!("  Error generating batch: {}", e),
-    }
-    
-    // Test attention head implementation
-    println!("\n🧠 Testing attention head implementation:");
-    let varmap = VarMap::new();
+    // Create variable map for model parameters
+    let mut varmap = VarMap::new();
     let vb = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
     
-    // Create a single attention head
-    let n_embd = 72;  // Embedding dimension (divisible by 6 for 6-head test)
-    let head_size = 12; // Head size for single head test
-    let block_size = 32; // Block size
-    let dropout_rate = 0.1;
+    let model = GPTLanguageModel::new(gpt_config.clone(), vb)
+        .context("Failed to create GPT model")?;
     
-    match Head::new(n_embd, head_size, block_size, dropout_rate, vb.pp("test_head")) {
-        Ok(head) => {
-            println!("  ✅ Single attention head created successfully");
-            println!("     - Embedding dim: {}", n_embd);
-            println!("     - Head size: {}", head_size);
-            println!("     - Block size: {}", block_size);
-            
-            // Test with dummy input
-            let batch_size = 2;
-            let seq_len = 8;
-            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
-            
-            match head.forward(&dummy_input, false) {
-                Ok(output) => {
-                    println!("  ✅ Forward pass successful");
-                    println!("     - Input shape: {:?}", dummy_input.shape());
-                    println!("     - Output shape: {:?}", output.shape());
-                }
-                Err(e) => println!("  ❌ Forward pass failed: {}", e),
-            }
+    // Step 5: Print model information
+    let param_count = model.count_parameters();
+    println!("✅ GPT model created successfully!");
+    println!("   📊 Model Statistics:");
+    println!("      - Vocabulary size: {}", gpt_config.vocab_size);
+    println!("      - Block size (context): {}", gpt_config.block_size);
+    println!("      - Embedding dimension: {}", gpt_config.n_embd);
+    println!("      - Number of layers: {}", gpt_config.n_layer);
+    println!("      - Number of attention heads: {}", gpt_config.n_head);
+    println!("      - Total parameters: ~{}", param_count);
+    println!("      - Dropout rate: {}", gpt_config.dropout_rate);
+    
+    // Step 6: Configure training parameters
+    println!("\n🏋️ Setting up training configuration...");
+    let mut training_config = TrainingConfig::default();
+    training_config.device = device.clone();
+    training_config.block_size = gpt_config.block_size;
+    training_config.batch_size = 32;  // Reasonable batch size
+    training_config.max_iters = 1000; // Enough iterations for demonstration
+    training_config.eval_interval = 100;
+    training_config.eval_iters = 50;
+    training_config.learning_rate = 3e-4; // Conservative learning rate
+    
+    println!("✅ Training configuration:");
+    println!("      - Learning rate: {}", training_config.learning_rate);
+    println!("      - Batch size: {}", training_config.batch_size);
+    println!("      - Block size: {}", training_config.block_size);
+    println!("      - Max iterations: {}", training_config.max_iters);
+    println!("      - Evaluation interval: {}", training_config.eval_interval);
+    
+    // Step 7: Validate data splits
+    println!("\n📊 Validating data splits...");
+    match tokenizer.get_batch(DataSplit::Train, 4, training_config.block_size) {
+        Ok((inputs, targets)) => {
+            println!("✅ Training data: {} batches available", inputs.shape().dims()[0]);
+            println!("   - Input shape: {:?}", inputs.shape());
+            println!("   - Target shape: {:?}", targets.shape());
         }
-        Err(e) => println!("  ❌ Head creation failed: {}", e),
+        Err(e) => {
+            return Err(anyhow::anyhow!("Training data validation failed: {}", e));
+        }
     }
     
-    // Test multi-head attention with 6 heads (as requested)
-    println!("\n🔄 Testing multi-head attention:");
-    let n_head = 6;  // Testing with 6 heads as specifically requested
-    let vb_mha = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
-    
-    match MultiHeadAttention::new(n_embd, n_head, block_size, dropout_rate, vb_mha.pp("test_mha")) {
-        Ok(mha) => {
-            println!("  ✅ Multi-head attention created successfully");
-            println!("     - Number of heads: {}", n_head);
-            println!("     - Head size: {}", n_embd / n_head);
-            
-            let batch_size = 2;
-            let seq_len = 8;
-            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
-            
-            match mha.forward(&dummy_input, false) {
-                Ok(output) => {
-                    println!("  ✅ Multi-head forward pass successful");
-                    println!("     - Input shape: {:?}", dummy_input.shape());
-                    println!("     - Output shape: {:?}", output.shape());
-                    
-                    // Verify shape preservation: input and output should have same shape
-                    if dummy_input.shape() == output.shape() {
-                        println!("  ✅ Shape preservation confirmed: (batch, time, channels) preserved");
-                    } else {
-                        println!("  ❌ Shape mismatch detected");
-                    }
-                    
-                    // Test with training mode (to test dropout)
-                    match mha.forward(&dummy_input, true) {
-                        Ok(train_output) => {
-                            println!("  ✅ Training mode forward pass successful");
-                            println!("     - Training output shape: {:?}", train_output.shape());
-                        }
-                        Err(e) => println!("  ❌ Training mode failed: {}", e),
-                    }
-                }
-                Err(e) => println!("  ❌ Multi-head forward pass failed: {}", e),
-            }
+    match tokenizer.get_batch(DataSplit::Val, 4, training_config.block_size) {
+        Ok((inputs, targets)) => {
+            println!("✅ Validation data: {} batches available", inputs.shape().dims()[0]);
+            println!("   - Input shape: {:?}", inputs.shape());
+            println!("   - Target shape: {:?}", targets.shape());
         }
-        Err(e) => println!("  ❌ Multi-head attention creation failed: {}", e),
+        Err(e) => {
+            return Err(anyhow::anyhow!("Validation data validation failed: {}", e));
+        }
     }
     
-    // Test feed-forward network
-    println!("\n🧮 Testing feed-forward network:");
-    let vb_ff = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    // Step 8: Run training loop
+    println!("\n🚀 Starting training...");
+    println!("====================================");
     
-    match FeedForward::new(n_embd, dropout_rate, vb_ff.pp("test_ff")) {
-        Ok(ff) => {
-            println!("  ✅ FeedForward network created successfully");
-            println!("     - Input dimension: {}", n_embd);
-            println!("     - Internal expansion: {} (4x)", 4 * n_embd);
-            println!("     - Output dimension: {}", n_embd);
-            
-            let batch_size = 2;
-            let seq_len = 8;
-            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
-            
-            match ff.forward(&dummy_input, false) {
-                Ok(output) => {
-                    println!("  ✅ Forward pass successful");
-                    println!("     - Input shape: {:?}", dummy_input.shape());
-                    println!("     - Output shape: {:?}", output.shape());
-                    
-                    // Verify shape preservation
-                    if dummy_input.shape() == output.shape() {
-                        println!("  ✅ Shape preservation confirmed: (batch, time, channels) preserved");
-                    } else {
-                        println!("  ❌ Shape mismatch detected");
-                    }
-                    
-                    // Test training mode with dropout
-                    match ff.forward(&dummy_input, true) {
-                        Ok(train_output) => {
-                            println!("  ✅ Training mode (with dropout) successful");
-                            println!("     - Training output shape: {:?}", train_output.shape());
-                        }
-                        Err(e) => println!("  ❌ Training mode failed: {}", e),
-                    }
-                }
-                Err(e) => println!("  ❌ Forward pass failed: {}", e),
-            }
-        }
-        Err(e) => println!("  ❌ FeedForward creation failed: {}", e),
+    let training_stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
+        .context("Training failed")?;
+    
+    println!("====================================");
+    println!("✅ Training completed successfully!");
+    
+    if let Some(final_stats) = training_stats.last() {
+        println!("📊 Final Training Statistics:");
+        println!("   - Final training loss: {:.4}", final_stats.train_loss);
+        println!("   - Final validation loss: {:.4}", final_stats.val_loss);
+        println!("   - Average tokens/sec: {:.0}", final_stats.tokens_per_sec);
+        println!("   - Total training time: {:.1}s", final_stats.elapsed_time);
+        println!("   - Training iterations completed: {}", training_stats.len());
     }
     
-    // Test complete transformer block
-    println!("\n🏗️ Testing complete transformer block:");
-    let vb_block = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    // Step 9: Generate text samples
+    println!("\n🎯 Generating text samples...");
+    println!("=====================================");
     
-    match Block::new(n_embd, n_head, block_size, dropout_rate, vb_block.pp("test_block")) {
-        Ok(block) => {
-            println!("  ✅ Transformer block created successfully");
-            println!("     - Embedding dimension: {}", n_embd);
-            println!("     - Number of heads: {}", n_head);
-            println!("     - Block size: {}", block_size);
-            println!("     - Components: Multi-head attention + Feed-forward");
-            println!("     - Features: Layer norm + Residual connections");
-            
-            let batch_size = 2;
-            let seq_len = 8;
-            let dummy_input = candle_core::Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)?.to_dtype(DType::F32)?;
-            
-            match block.forward(&dummy_input, false) {
-                Ok(output) => {
-                    println!("  ✅ Forward pass successful");
-                    println!("     - Input shape: {:?}", dummy_input.shape());
-                    println!("     - Output shape: {:?}", output.shape());
-                    
-                    // Verify shape preservation
-                    if dummy_input.shape() == output.shape() {
-                        println!("  ✅ Shape preservation confirmed: (batch, time, channels) preserved");
-                    } else {
-                        println!("  ❌ Shape mismatch detected");
-                    }
-                    
-                    // Test training mode 
-                    match block.forward(&dummy_input, true) {
-                        Ok(train_output) => {
-                            println!("  ✅ Training mode successful");
-                            println!("     - Training output shape: {:?}", train_output.shape());
-                            
-                            // Verify residual connections are working by checking that output != input
-                            // (This is implicit - if forward pass works, residuals are working)
-                            println!("  ✅ Residual connections confirmed: x + attention(ln(x)) + ffwd(ln(x))");
-                        }
-                        Err(e) => println!("  ❌ Training mode failed: {}", e),
-                    }
-                }
-                Err(e) => println!("  ❌ Forward pass failed: {}", e),
-            }
-        }
-        Err(e) => println!("  ❌ Transformer block creation failed: {}", e),
-    }
+    generate_text_samples(&model, &tokenizer, &device)
+        .context("Text generation failed")?;
     
-    // Test complete GPT language model
-    println!("\n🤖 Testing complete GPT language model:");
-    let vb_gpt = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    // Step 10: Final summary
+    println!("\n🎉 GPT Training and Generation Complete!");
+    println!("========================================");
+    println!("✅ Successfully completed all steps:");
+    println!("   1. ✅ Loaded Shakespeare dataset ({} characters)", tokenizer.vocab_size);
+    println!("   2. ✅ Created and configured GPT model ({} parameters)", param_count);
+    println!("   3. ✅ Trained model for {} iterations", training_config.max_iters);
+    println!("   4. ✅ Generated text samples with trained model");
+    println!("\n🚀 Ready for production use or further training!");
     
-    // Create GPT config compatible with our tokenizer
-    let gpt_config = GPTConfig {
-        vocab_size: tokenizer.vocab_size,  // Use tokenizer's vocabulary size
-        block_size: 32,                   // Small block size for testing
-        n_embd: n_embd,                   // Same as our test embedding dimension
-        n_head: n_head,                   // Same as our test head count
-        n_layer: 2,                       // Small number of layers for testing
-        dropout_rate: dropout_rate,
-    };
-    
-    match GPTLanguageModel::new(gpt_config.clone(), vb_gpt.pp("gpt")) {
-        Ok(gpt_model) => {
-            println!("  ✅ GPT model created successfully");
-            println!("     - Vocabulary size: {}", gpt_config.vocab_size);
-            println!("     - Block size: {}", gpt_config.block_size);
-            println!("     - Embedding dimension: {}", gpt_config.n_embd);
-            println!("     - Number of heads: {}", gpt_config.n_head);
-            println!("     - Number of layers: {}", gpt_config.n_layer);
-            println!("     - Parameters: ~{}", gpt_model.count_parameters());
-            
-            // Test with real tokenized data
-            match tokenizer.get_batch(DataSplit::Train, 2, 8) {
-                Ok((inputs, targets)) => {
-                    println!("  📊 Testing with real Shakespeare data:");
-                    println!("     - Input shape: {:?}", inputs.shape());
-                    println!("     - Target shape: {:?}", targets.shape());
-                    
-                    // Forward pass with loss (training mode)
-                    match gpt_model.forward(&inputs, Some(&targets), true) {
-                        Ok((logits, loss)) => {
-                            println!("  ✅ Training forward pass successful");
-                            println!("     - Logits shape: {:?}", logits.shape());
-                            
-                            if let Some(loss_tensor) = loss {
-                                match loss_tensor.to_scalar::<f32>() {
-                                    Ok(loss_value) => {
-                                        println!("     - Loss: {:.4}", loss_value);
-                                        println!("  ✅ Cross-entropy loss computed successfully");
-                                    }
-                                    Err(e) => println!("  ❌ Loss extraction failed: {}", e),
-                                }
-                            }
-                        }
-                        Err(e) => println!("  ❌ Training forward pass failed: {}", e),
-                    }
-                    
-                    // Test inference mode (without targets)
-                    match gpt_model.forward(&inputs, None, false) {
-                        Ok((logits, loss)) => {
-                            println!("  ✅ Inference forward pass successful");
-                            println!("     - Logits shape: {:?}", logits.shape());
-                            assert!(loss.is_none());
-                            println!("  ✅ No loss computed in inference mode");
-                        }
-                        Err(e) => println!("  ❌ Inference forward pass failed: {}", e),
-                    }
-                    
-                    // Test text generation
-                    let prompt_text = "Hello";
-                    let prompt_tokens = tokenizer.encode(prompt_text);
-                    if !prompt_tokens.is_empty() {
-                        match tokenizer.indices_to_tensor(&prompt_tokens) {
-                            Ok(prompt_tensor) => {
-                                let prompt_tensor = prompt_tensor.unsqueeze(0)?; // Add batch dimension
-                                
-                                match gpt_model.generate(&prompt_tensor, 5) {
-                                    Ok(generated) => {
-                                        println!("  🎯 Text generation test:");
-                                        println!("     - Prompt: '{}'", prompt_text);
-                                        
-                                        if let Ok(generated_flat) = generated.get(0) {
-                                            if let Ok(generated_indices) = generated_flat.to_vec1::<u32>() {
-                                                let generated_indices: Vec<usize> = generated_indices.iter().map(|&x| x as usize).collect();
-                                                let generated_text = tokenizer.decode(&generated_indices);
-                                                println!("     - Generated: '{}'", generated_text);
-                                                println!("  ✅ Text generation successful");
-                                            }
-                                        }
-                                    }
-                                    Err(e) => println!("  ❌ Text generation failed: {}", e),
-                                }
-                            }
-                            Err(e) => println!("  ❌ Prompt tensor creation failed: {}", e),
-                        }
-                    }
-                }
-                Err(e) => println!("  ❌ Failed to get training batch: {}", e),
-            }
-        }
-        Err(e) => println!("  ❌ GPT model creation failed: {}", e),
-    }
-    
-    println!("\n🎉 Complete GPT implementation finished!");
-    println!("📋 Final summary:");
-    println!("  ✅ Character-level tokenizer with vocabulary and batching");
-    println!("  ✅ Multi-head self-attention with causal masking");  
-    println!("  ✅ Feed-forward MLP with 4x expansion");
-    println!("  ✅ Complete transformer block with residual connections");
-    println!("  ✅ Layer normalization and dropout regularization");
-    println!("  ✅ Full GPT language model with embeddings");
-    println!("  ✅ Cross-entropy loss computation");
-    println!("  ✅ Text generation capabilities");
-    println!("\n🚀 Ready for training and deployment!");
     Ok(())
+}
+
+/// Setup compute device (CPU or CUDA if available)
+fn setup_device() -> Result<Device> {
+    // Try to use CUDA if available, otherwise fall back to CPU
+    match Device::cuda_if_available(0) {
+        Ok(device) => {
+            if device.is_cuda() {
+                println!("🚀 CUDA GPU detected and will be used for training");
+                Ok(device)
+            } else {
+                println!("💻 Using CPU for training (CUDA not available)");
+                Ok(Device::Cpu)
+            }
+        }
+        Err(_) => {
+            println!("💻 Using CPU for training");
+            Ok(Device::Cpu)
+        }
+    }
+}
+
+/// Generate various text samples to demonstrate the trained model
+fn generate_text_samples(
+    model: &GPTLanguageModel,
+    tokenizer: &CharTokenizer,
+    _device: &Device,
+) -> Result<()> {
+    let prompts = vec![
+        "ROMEO:",
+        "JULIET:",
+        "To be or not to be",
+        "Once upon a time",
+        "HAMLET:",
+    ];
+    
+    println!("Generating 500 tokens for various prompts:\n");
+    
+    for (i, prompt) in prompts.iter().enumerate() {
+        println!("📝 Sample {} - Prompt: \"{}\"", i + 1, prompt);
+        println!("{}", "-".repeat(60));
+        
+        match generate_single_sample(model, tokenizer, prompt, 500) {
+            Ok(generated_text) => {
+                println!("{}", generated_text);
+                println!("\n{}\n", "=".repeat(60));
+            }
+            Err(e) => {
+                println!("❌ Failed to generate text for prompt '{}': {}", prompt, e);
+                println!("{}\n", "=".repeat(60));
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Generate a single text sample from a prompt
+fn generate_single_sample(
+    model: &GPTLanguageModel,
+    tokenizer: &CharTokenizer,
+    prompt: &str,
+    max_tokens: usize,
+) -> Result<String> {
+    // Encode the prompt
+    let prompt_tokens = tokenizer.encode(prompt);
+    
+    if prompt_tokens.is_empty() {
+        return Err(anyhow::anyhow!("Empty prompt tokens"));
+    }
+    
+    // Convert to tensor and add batch dimension
+    let prompt_tensor = tokenizer.indices_to_tensor(&prompt_tokens)
+        .context("Failed to convert prompt to tensor")?;
+    let prompt_tensor = prompt_tensor.unsqueeze(0)
+        .context("Failed to add batch dimension")?;
+    
+    // Generate tokens
+    let generated_tensor = model.generate(&prompt_tensor, max_tokens)
+        .context("Failed to generate tokens")?;
+    
+    // Convert back to text
+    let generated_flat = generated_tensor.get(0)
+        .context("Failed to get generated sequence")?;
+    let generated_indices = generated_flat.to_vec1::<u32>()
+        .context("Failed to convert generated tensor to vector")?;
+    
+    let generated_indices: Vec<usize> = generated_indices
+        .iter()
+        .map(|&x| x as usize)
+        .collect();
+    
+    let generated_text = tokenizer.decode(&generated_indices);
+    
+    Ok(generated_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_device_setup() {
+        let device = setup_device();
+        assert!(device.is_ok());
+    }
+    
+    #[test]
+    fn test_data_path_exists() {
+        let data_path = "pt-data/input.txt";
+        assert!(Path::new(data_path).exists(), "Shakespeare data file should exist");
+    }
+    
+    #[test]
+    fn test_model_config_creation() {
+        let config = create_medium_gpt_config(65);
+        assert_eq!(config.vocab_size, 65);
+        assert!(config.n_embd > 0);
+        assert!(config.n_layer > 0);
+        assert!(config.n_head > 0);
+        assert!(config.block_size > 0);
+    }
+    
+    #[test]
+    fn test_tokenizer_integration() {
+        if Path::new("pt-data/input.txt").exists() {
+            let device = Device::Cpu;
+            let tokenizer = CharTokenizer::from_file("pt-data/input.txt", device);
+            assert!(tokenizer.is_ok());
+            
+            if let Ok(tokenizer) = tokenizer {
+                assert!(tokenizer.vocab_size > 0);
+                
+                // Test encoding/decoding
+                let test_text = "Hello";
+                let encoded = tokenizer.encode(test_text);
+                let decoded = tokenizer.decode(&encoded);
+                assert_eq!(test_text, decoded);
+            }
+        }
+    }
 }

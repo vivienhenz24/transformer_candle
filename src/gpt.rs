@@ -449,10 +449,52 @@ impl GPTLanguageModel {
         Ok((logits, loss))
     }
     
+    /// Sample from a probability distribution using multinomial sampling
+    /// Returns indices sampled from the distribution
+    fn multinomial_sample(&self, probs: &Tensor) -> CandleResult<Tensor> {
+        let (batch_size, vocab_size) = probs.dims2()?;
+        let device = probs.device();
+        
+        // Convert probabilities to Vec for sampling
+        let mut sampled_tokens = Vec::with_capacity(batch_size);
+        
+        for b in 0..batch_size {
+            // Get probabilities for this batch element
+            let batch_probs = probs.get(b)?;
+            let prob_vec = batch_probs.to_vec1::<f32>()?;
+            
+            // Create cumulative distribution
+            let mut cum_prob = 0.0f32;
+            let mut cumulative = Vec::with_capacity(vocab_size);
+            for &p in &prob_vec {
+                cum_prob += p;
+                cumulative.push(cum_prob);
+            }
+            
+            // Sample using uniform random number
+            let random_val = fastrand::f32();
+            
+            // Find the token corresponding to this random value
+            let mut sampled_token = vocab_size - 1; // Default to last token
+            for (i, &cum_p) in cumulative.iter().enumerate() {
+                if random_val <= cum_p {
+                    sampled_token = i;
+                    break;
+                }
+            }
+            
+            sampled_tokens.push(sampled_token as u32);
+        }
+        
+        // Convert back to tensor
+        let result = Tensor::from_vec(sampled_tokens, (batch_size, 1), device)?;
+        Ok(result)
+    }
+    
     /// Generate new tokens (inference mode)
-    /// Takes a sequence and generates the next token
+    /// Takes a sequence and generates the next token using multinomial sampling
     pub fn generate_next(&self, idx: &Tensor) -> CandleResult<Tensor> {
-        let (batch_size, seq_len) = idx.dims2()?;
+        let (_batch_size, seq_len) = idx.dims2()?;
         
         // If sequence is longer than block_size, take the last block_size tokens
         let idx = if seq_len > self.config.block_size {
@@ -472,25 +514,65 @@ impl GPTLanguageModel {
         // Apply softmax to get probabilities
         let probs = candle_nn::ops::softmax_last_dim(&last_logits)?;
         
-        // Sample from the distribution (for now, just take argmax for deterministic generation)
-        let next_token = probs.argmax_keepdim(1)?; // (batch_size, 1)
+        // Sample from the distribution using multinomial sampling
+        let next_token = self.multinomial_sample(&probs)?; // (batch_size, 1)
         
         Ok(next_token)
     }
     
-    /// Generate a sequence of tokens
-    pub fn generate(&self, idx: &Tensor, max_new_tokens: usize) -> CandleResult<Tensor> {
-        let mut current_idx = idx.clone();
+    /// Generate a sequence of tokens using multinomial sampling
+    /// 
+    /// This method implements the complete text generation pipeline:
+    /// 1. Takes a context tensor and maximum number of new tokens to generate
+    /// 2. Crops context to last block_size tokens if it's too long
+    /// 3. For each new token: gets logits, applies softmax, samples from distribution
+    /// 4. Appends sampled token to the sequence
+    /// 5. Continues until max_new_tokens is reached
+    /// 6. Returns the complete generated sequence
+    /// 7. Uses multinomial sampling for diverse text generation
+    ///
+    /// # Arguments
+    /// * `context` - Input tensor of shape (batch_size, seq_len) with token indices
+    /// * `max_new_tokens` - Maximum number of new tokens to generate
+    ///
+    /// # Returns
+    /// * Complete sequence including original context and newly generated tokens
+    pub fn generate(&self, context: &Tensor, max_new_tokens: usize) -> CandleResult<Tensor> {
+        let (_batch_size, _initial_seq_len) = context.dims2()?;
         
-        for _ in 0..max_new_tokens {
-            // Generate next token
-            let next_token = self.generate_next(&current_idx)?;
+        // Start with the input context
+        let mut current_sequence = context.clone();
+        
+        // Generate tokens one by one
+        for _token_idx in 0..max_new_tokens {
+            let (_, current_seq_len) = current_sequence.dims2()?;
             
-            // Append to sequence
-            current_idx = Tensor::cat(&[current_idx, next_token], 1)?;
+            // Crop context to last block_size tokens if it's too long
+            let model_input = if current_seq_len > self.config.block_size {
+                let start_idx = current_seq_len - self.config.block_size;
+                current_sequence.narrow(1, start_idx, self.config.block_size)?
+            } else {
+                current_sequence.clone()
+            };
+            
+            // Forward pass to get logits for next token
+            let (logits, _) = self.forward(&model_input, None, false)?;
+            
+            // Extract logits for the last position (next token prediction)
+            let last_logits = logits.narrow(1, logits.dim(1)? - 1, 1)?; // (batch_size, 1, vocab_size)
+            let last_logits = last_logits.squeeze(1)?; // (batch_size, vocab_size)
+            
+            // Apply softmax to convert logits to probabilities
+            let probabilities = candle_nn::ops::softmax_last_dim(&last_logits)?;
+            
+            // Sample next token from the probability distribution using multinomial sampling
+            let next_token = self.multinomial_sample(&probabilities)?; // (batch_size, 1)
+            
+            // Append the sampled token to the current sequence
+            current_sequence = Tensor::cat(&[current_sequence, next_token], 1)?;
         }
         
-        Ok(current_idx)
+        Ok(current_sequence)
     }
     
     /// Get the model configuration
