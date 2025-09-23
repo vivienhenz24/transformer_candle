@@ -149,71 +149,49 @@ fn main() -> Result<()> {
 /// Setup compute device (prefer Metal on Apple, then CUDA, otherwise CPU)
 fn setup_device() -> Result<Device> {
     println!("Starting device detection...");
-    
-    // Check for Metal support first (Apple Silicon/Intel Macs)
-    println!("Checking for Metal GPU support...");
-    match Device::new_metal(0) {
-        Ok(device) => {
-            println!("Metal GPU detected successfully!");
-            println!("   Device type: {:?}", device);
-            println!("   Device info: {:?}", device);
-            println!("Metal GPU will be used for training");
-            return Ok(device);
-        }
-        Err(e) => {
-            println!("Metal GPU detection failed:");
-            println!("   Error: {:?}", e);
-            println!("   This could mean:");
-            println!("   - Metal framework is not available");
-            println!("   - No Metal-compatible GPU found");
-            println!("   - Metal backend not compiled in candle-core");
-            println!("   - Running on non-Apple hardware");
+
+    // Prefer the Metal backend when compiled with the Metal feature.
+    #[cfg(feature = "metal")]
+    {
+        println!("Checking for Metal GPU support...");
+        match Device::new_metal(0) {
+            Ok(device) => {
+                println!("Metal GPU detected successfully!");
+                println!("   Device type: {:?}", device);
+                println!("   Device info: {:?}", device);
+                println!("Metal GPU will be used for training");
+                return Ok(device);
+            }
+            Err(err) => {
+                println!("Metal GPU detection failed: {err}");
+                println!("Falling back to other backends...\n");
+            }
         }
     }
 
-    // Check for CUDA support
-    println!("\n🔍 Checking for CUDA GPU support...");
+    // When the Metal feature isn’t enabled we silently fall through to other backends.
+    #[cfg(not(feature = "metal"))]
+    {
+        println!("Metal backend not enabled at compile time, skipping detection.\n");
+    }
+
+    // Check for CUDA support next.
+    println!("🔍 Checking for CUDA GPU support...");
     match Device::cuda_if_available(0) {
         Ok(device) => {
-            println!("CUDA device creation succeeded");
-            println!("   Device type: {:?}", device);
-            println!("   Is CUDA: {}", device.is_cuda());
-            
             if device.is_cuda() {
                 println!("CUDA GPU detected and will be used for training");
                 return Ok(device);
-            } else {
-                println!(" CUDA device created but is_cuda() returned false");
-                println!("Falling back to CPU for training");
-                return Ok(Device::Cpu);
             }
+
+            println!("CUDA device handle returned but not reporting as CUDA, skipping.");
         }
-        Err(e) => {
-            println!("CUDA GPU detection failed:");
-            println!("   Error: {:?}", e);
-            println!("   This could mean:");
-            println!("   - CUDA is not installed");
-            println!("   - No CUDA-compatible GPU found");
-            println!("   - CUDA backend not compiled in candle-core");
-            println!("   - CUDA driver issues");
+        Err(err) => {
+            println!("CUDA GPU detection failed: {err}");
         }
     }
 
-    // Fallback to CPU
-    println!("\n Using CPU for training (no GPU backend available)");
-    println!("   Available backends will be checked...");
-    
-    // Let's also check what backends are actually available
-    println!(" Checking available device backends:");
-    println!("   CPU: Always available");
-    
-    // Try to get more info about why Metal failed
-    #[cfg(target_os = "macos")]
-    {
-        println!("   Metal: Checking system capabilities...");
-        // We could add more specific Metal checks here if needed
-    }
-    
+    println!("💻 Using CPU for training (no GPU backend available)");
     Ok(Device::Cpu)
 }
 

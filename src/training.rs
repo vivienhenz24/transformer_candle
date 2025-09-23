@@ -1,5 +1,9 @@
 use candle_core::{Device, Result as CandleResult};
-use candle_nn::{VarMap, VarBuilder};
+use candle_nn::{
+    VarBuilder,
+    VarMap,
+    optim::{AdamW, Optimizer, ParamsAdamW},
+};
 use std::time::Instant;
 
 use crate::gpt::{GPTLanguageModel, GPTConfig};
@@ -109,7 +113,7 @@ pub struct TrainingStats {
 pub fn train_model(
     model: &GPTLanguageModel,
     tokenizer: &CharTokenizer,
-    _varmap: &mut VarMap,
+    varmap: &mut VarMap,
     config: &TrainingConfig,
 ) -> CandleResult<Vec<TrainingStats>> {
     println!("Starting GPT training...");
@@ -124,6 +128,17 @@ pub fn train_model(
     println!();
     
     let mut training_stats = Vec::new();
+
+    let mut optimizer = AdamW::new(
+        varmap.all_vars(),
+        ParamsAdamW {
+            lr: config.learning_rate,
+            beta1: config.beta1,
+            beta2: config.beta2,
+            weight_decay: config.weight_decay,
+            eps: config.eps,
+        },
+    )?;
     
     // Timing and statistics
     let training_start = Instant::now();
@@ -147,19 +162,16 @@ pub fn train_model(
         // Forward pass with loss computation
         let (_logits, loss) = model.forward(&inputs, Some(&targets), true)
             .map_err(|e| candle_core::Error::Msg(format!("Forward pass failed: {}", e)))?;
-        
-        let train_loss = if let Some(loss_tensor) = loss {
-            // Simple gradient descent update
-            // Note: This is a simplified approach - in practice you'd want proper backpropagation
-            // For now, we'll track the loss but won't update parameters
-            // In a full implementation, you'd compute gradients and apply updates
-            
-            // Get loss value
-            loss_tensor.to_scalar::<f32>()
-                .map_err(|e| candle_core::Error::Msg(format!("Failed to extract loss value: {}", e)))?
-        } else {
-            return Err(candle_core::Error::Msg("No loss computed during training".to_string()));
-        };
+
+        let loss_tensor = loss.ok_or_else(|| {
+            candle_core::Error::Msg("No loss computed during training".to_string())
+        })?;
+
+        optimizer.backward_step(&loss_tensor)
+            .map_err(|e| candle_core::Error::Msg(format!("Optimizer step failed: {}", e)))?;
+
+        let train_loss = loss_tensor.to_scalar::<f32>()
+            .map_err(|e| candle_core::Error::Msg(format!("Failed to extract loss value: {}", e)))?;
         
         // Update token count
         tokens_processed += config.batch_size * config.block_size;
