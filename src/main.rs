@@ -142,21 +142,25 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Setup compute device (CPU or CUDA if available)
+/// Setup compute device (prefer Metal on Apple, then CUDA, otherwise CPU)
 fn setup_device() -> Result<Device> {
-    // Try to use CUDA if available, otherwise fall back to CPU
+    if let Ok(device) = Device::new_metal(0) {
+        println!("🚀 Metal GPU detected and will be used for training");
+        return Ok(device);
+    }
+
     match Device::cuda_if_available(0) {
         Ok(device) => {
             if device.is_cuda() {
-                println!(" CUDA GPU detected and will be used for training");
+                println!("🚀 CUDA GPU detected and will be used for training");
                 Ok(device)
             } else {
-                println!("Using CPU for training (CUDA not available)");
+                println!("💻 Using CPU for training (GPU not available)");
                 Ok(Device::Cpu)
             }
         }
         Err(_) => {
-            println!("💻 Using CPU for training");
+            println!("💻 Using CPU for training (no GPU backend available)");
             Ok(Device::Cpu)
         }
     }
