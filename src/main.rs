@@ -1,9 +1,5 @@
-mod gpt;
-mod tokenizer;
-mod training;
-
 use anyhow::{Context, Result};
-use candle_core::{DType, Device};
+use candle_core::DType;
 use candle_nn::VarMap;
 use std::{
     env,
@@ -11,9 +7,17 @@ use std::{
     path::Path,
 };
 
-use gpt::{GPTConfig, GPTLanguageModel};
-use tokenizer::{CharTokenizer, DataSplit};
-use training::{create_medium_gpt_config, train_model, TrainingConfig};
+use transformer::{
+    check_available_backends,
+    create_medium_gpt_config,
+    train_model,
+    setup_device,
+    CharTokenizer,
+    DataSplit,
+    GPTConfig,
+    GPTLanguageModel,
+    TrainingConfig,
+};
 use utils::prompts::build_prompt;
 
 #[derive(Debug, Clone, Copy)]
@@ -273,95 +277,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Setup compute device (prefer Metal on Apple, then CUDA, otherwise CPU)
-fn setup_device() -> Result<Device> {
-    println!("Starting device detection...");
-
-    // Prefer the Metal backend when compiled with the Metal feature.
-    #[cfg(feature = "metal")]
-    {
-        println!("Checking for Metal GPU support...");
-        match Device::new_metal(0) {
-            Ok(device) => {
-                println!("Metal GPU detected successfully!");
-                println!("   Device type: {:?}", device);
-                println!("   Device info: {:?}", device);
-                println!("Metal GPU will be used for training");
-                return Ok(device);
-            }
-            Err(err) => {
-                println!("Metal GPU detection failed: {err}");
-                println!("Falling back to other backends...\n");
-            }
-        }
-    }
-
-    // When the Metal feature isn’t enabled we silently fall through to other backends.
-    #[cfg(not(feature = "metal"))]
-    {
-        println!("Metal backend not enabled at compile time, skipping detection.\n");
-    }
-
-    // Check for CUDA support next.
-    println!("🔍 Checking for CUDA GPU support...");
-    match Device::cuda_if_available(0) {
-        Ok(device) => {
-            if device.is_cuda() {
-                println!("CUDA GPU detected and will be used for training");
-                return Ok(device);
-            }
-
-            println!("CUDA device handle returned but not reporting as CUDA, skipping.");
-        }
-        Err(err) => {
-            println!("CUDA GPU detection failed: {err}");
-        }
-    }
-
-    println!("💻 Using CPU for training (no GPU backend available)");
-    Ok(Device::Cpu)
-}
-
-/// Check what backends are available and provide system information
-fn check_available_backends() {
-    println!(" System Information:");
-    println!("   OS: {}", std::env::consts::OS);
-    println!("   Architecture: {}", std::env::consts::ARCH);
-    println!("   Family: {}", std::env::consts::FAMILY);
-
-    // Check if we're on macOS (where Metal should be available)
-    #[cfg(target_os = "macos")]
-    {
-        println!("   Platform: macOS (Metal should be available)");
-
-        // Try to get more system info
-        if let Ok(output) = std::process::Command::new("system_profiler")
-            .args(&["SPHardwareDataType"])
-            .output()
-        {
-            if let Ok(hardware_info) = String::from_utf8(output.stdout) {
-                for line in hardware_info.lines() {
-                    if line.contains("Chip") || line.contains("Processor") || line.contains("Model")
-                    {
-                        println!("   Hardware: {}", line.trim());
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        println!("   Platform: Non-macOS (Metal not available)");
-    }
-
-    // Check candle-core features
-    println!("\n Candle-core backend availability:");
-    println!("   CPU: Always available");
-    println!("   Metal: Checking at runtime (feature detection not available)");
-    println!("   CUDA: Checking at runtime (feature detection not available)");
-}
-
 /// Interactive loop allowing the user to provide prompts and control output length.
 fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokenizer) -> Result<()> {
     println!("Type a prompt and press Enter to generate text.");
@@ -462,54 +377,5 @@ fn generate_single_sample(
         Ok(tokenizer.decode(&generated_indices[assistant_start..]))
     } else {
         Ok(String::new())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_device_setup() {
-        let device = setup_device();
-        assert!(device.is_ok());
-    }
-
-    #[test]
-    fn test_data_path_exists() {
-        let data_path = "pt-data/input.txt";
-        assert!(
-            Path::new(data_path).exists(),
-            "Shakespeare data file should exist"
-        );
-    }
-
-    #[test]
-    fn test_model_config_creation() {
-        let config = create_medium_gpt_config(65);
-        assert_eq!(config.vocab_size, 65);
-        assert!(config.n_embd > 0);
-        assert!(config.n_layer > 0);
-        assert!(config.n_head > 0);
-        assert!(config.block_size > 0);
-    }
-
-    #[test]
-    fn test_tokenizer_integration() {
-        if Path::new("pt-data/input.txt").exists() {
-            let device = Device::Cpu;
-            let tokenizer = CharTokenizer::from_file("pt-data/input.txt", device);
-            assert!(tokenizer.is_ok());
-
-            if let Ok(tokenizer) = tokenizer {
-                assert!(tokenizer.vocab_size > 0);
-
-                // Test encoding/decoding
-                let test_text = "Hello";
-                let encoded = tokenizer.encode(test_text);
-                let decoded = tokenizer.decode(&encoded);
-                assert_eq!(test_text, decoded);
-            }
-        }
     }
 }

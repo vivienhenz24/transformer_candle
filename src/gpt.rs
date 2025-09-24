@@ -53,7 +53,7 @@ impl Head {
 
     /// Create causal mask (lower triangular matrix)
     /// This prevents attention to future tokens
-    fn create_causal_mask(&self, seq_len: usize, device: &Device) -> CandleResult<Tensor> {
+    pub fn create_causal_mask(&self, seq_len: usize, device: &Device) -> CandleResult<Tensor> {
         // Create a lower triangular matrix filled with 1s
         let mut mask_data = vec![0.0f32; seq_len * seq_len];
 
@@ -116,6 +116,16 @@ impl Head {
         let output = attention_weights.matmul(&values)?;
 
         Ok(output)
+    }
+
+    /// Size of this attention head (primarily for inspection and testing)
+    pub fn head_size(&self) -> usize {
+        self.head_size
+    }
+
+    /// Maximum sequence length this head was configured for
+    pub fn block_size(&self) -> usize {
+        self.block_size
     }
 }
 
@@ -185,6 +195,11 @@ impl MultiHeadAttention {
         };
 
         Ok(output)
+    }
+
+    /// Number of attention heads in this layer
+    pub fn num_heads(&self) -> usize {
+        self.heads.len()
     }
 }
 
@@ -579,6 +594,17 @@ impl GPTLanguageModel {
 
         token_emb_params + pos_emb_params + block_params + lm_head_params + final_ln_params
     }
+
+    /// Sample the next token from logits using the provided sampling parameters.
+    pub fn sample_next_token(
+        &self,
+        logits: &Tensor,
+        temperature: f64,
+        top_k: Option<usize>,
+        top_p: Option<f64>,
+    ) -> CandleResult<Tensor> {
+        sample_next_token(logits, temperature, top_k, top_p)
+    }
 }
 
 fn sample_next_token(
@@ -700,488 +726,4 @@ fn sample_from_logits_row(
         .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(idx, _)| idx)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use candle_nn::VarMap;
-
-    #[test]
-    fn test_head_creation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let head = Head::new(512, 64, 128, 0.1, vb).unwrap();
-        assert_eq!(head.head_size, 64);
-        assert_eq!(head.block_size, 128);
-    }
-
-    #[test]
-    fn test_causal_mask() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let head = Head::new(512, 64, 128, 0.1, vb).unwrap();
-        let mask = head.create_causal_mask(4, &device).unwrap();
-
-        // Check that mask has correct shape
-        assert_eq!(mask.dims(), &[4, 4]);
-    }
-
-    #[test]
-    fn test_multi_head_attention() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let mha = MultiHeadAttention::new(512, 8, 128, 0.1, vb).unwrap();
-        assert_eq!(mha.heads.len(), 8);
-    }
-
-    #[test]
-    fn test_six_head_attention() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        // Test with 6 heads as specifically requested
-        let n_embd = 72; // Divisible by 6
-        let n_head = 6;
-        let mha = MultiHeadAttention::new(n_embd, n_head, 128, 0.1, vb).unwrap();
-
-        assert_eq!(mha.heads.len(), 6);
-
-        // Test forward pass with shape preservation
-        let batch_size = 2;
-        let seq_len = 10;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        let output = mha.forward(&input, false).unwrap();
-
-        // Verify input and output shapes match
-        assert_eq!(input.shape(), output.shape());
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-    }
-
-    #[test]
-    fn test_feedforward_creation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let ff = FeedForward::new(512, 0.1, vb).unwrap();
-        // FeedForward should be created successfully
-        // Internal structure is opaque but we can test forward pass
-    }
-
-    #[test]
-    fn test_feedforward_shape_preservation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 64;
-        let ff = FeedForward::new(n_embd, 0.1, vb).unwrap();
-
-        // Test with different batch sizes and sequence lengths
-        let batch_size = 3;
-        let seq_len = 12;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        let output = ff.forward(&input, false).unwrap();
-
-        // Should preserve input shape exactly
-        assert_eq!(input.shape(), output.shape());
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-    }
-
-    #[test]
-    fn test_feedforward_training_mode() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 48;
-        let ff = FeedForward::new(n_embd, 0.5, vb).unwrap(); // High dropout for testing
-
-        let batch_size = 2;
-        let seq_len = 8;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        // Test both training and evaluation modes
-        let train_output = ff.forward(&input, true).unwrap();
-        let eval_output = ff.forward(&input, false).unwrap();
-
-        // Both should have same shape as input
-        assert_eq!(input.shape(), train_output.shape());
-        assert_eq!(input.shape(), eval_output.shape());
-    }
-
-    #[test]
-    fn test_feedforward_expansion_contraction() {
-        // This test verifies the 4x expansion internally works
-        // We can't directly test internal dimensions but can verify the network works
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 32; // Small size for testing
-        let ff = FeedForward::new(n_embd, 0.0, vb).unwrap(); // No dropout for deterministic test
-
-        let batch_size = 1;
-        let seq_len = 1;
-        let input = Tensor::ones((batch_size, seq_len, n_embd), DType::F32, &device).unwrap();
-
-        let output = ff.forward(&input, false).unwrap();
-
-        // Output should have same shape but different values (due to computation)
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-        // The network should actually compute something (not just return input)
-        // This is implicit - if shapes match but computation happened, test passes
-    }
-
-    #[test]
-    fn test_block_creation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let block = Block::new(512, 8, 128, 0.1, vb).unwrap();
-        // Block should be created successfully with all components
-    }
-
-    #[test]
-    fn test_block_shape_preservation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 72; // Divisible by 6 for multi-head attention
-        let n_head = 6;
-        let block_size = 32;
-        let dropout_rate = 0.1;
-
-        let block = Block::new(n_embd, n_head, block_size, dropout_rate, vb).unwrap();
-
-        // Test with different batch sizes and sequence lengths
-        let batch_size = 2;
-        let seq_len = 16;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        let output = block.forward(&input, false).unwrap();
-
-        // Should preserve input shape exactly
-        assert_eq!(input.shape(), output.shape());
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-    }
-
-    #[test]
-    fn test_block_residual_connections() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 48;
-        let n_head = 4;
-        let block_size = 16;
-        let dropout_rate = 0.0; // No dropout for deterministic test
-
-        let block = Block::new(n_embd, n_head, block_size, dropout_rate, vb).unwrap();
-
-        let batch_size = 1;
-        let seq_len = 8;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        let output = block.forward(&input, false).unwrap();
-
-        // Output should have same shape but different values due to computation
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-
-        // The transformer should actually process the input (not just return it)
-        // This is implicit - if the forward pass completes successfully with correct shapes,
-        // the residual connections and layer norms are working
-    }
-
-    #[test]
-    fn test_block_training_mode() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 60;
-        let n_head = 5;
-        let block_size = 20;
-        let dropout_rate = 0.3; // Some dropout for testing
-
-        let block = Block::new(n_embd, n_head, block_size, dropout_rate, vb).unwrap();
-
-        let batch_size = 3;
-        let seq_len = 12;
-        let input = Tensor::randn(0.0f32, 1.0f32, (batch_size, seq_len, n_embd), &device)
-            .unwrap()
-            .to_dtype(DType::F32)
-            .unwrap();
-
-        // Test both training and evaluation modes
-        let train_output = block.forward(&input, true).unwrap();
-        let eval_output = block.forward(&input, false).unwrap();
-
-        // Both should have same shape as input
-        assert_eq!(input.shape(), train_output.shape());
-        assert_eq!(input.shape(), eval_output.shape());
-    }
-
-    #[test]
-    fn test_block_communication_and_computation() {
-        // Test that the block correctly combines attention (communication) and feedforward (computation)
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let n_embd = 36; // Small for testing
-        let n_head = 6; // 6 heads as requested in previous implementations
-        let block_size = 8;
-        let dropout_rate = 0.0; // No dropout for cleaner test
-
-        let block = Block::new(n_embd, n_head, block_size, dropout_rate, vb).unwrap();
-
-        let batch_size = 1;
-        let seq_len = 4;
-        let input = Tensor::ones((batch_size, seq_len, n_embd), DType::F32, &device).unwrap();
-
-        let output = block.forward(&input, false).unwrap();
-
-        // Verify the complete transformer block works
-        assert_eq!(output.dims3().unwrap(), (batch_size, seq_len, n_embd));
-
-        // The block should process information through both attention and feed-forward
-        // If this test passes, it means:
-        // 1. Layer normalization is working
-        // 2. Attention (communication) is working
-        // 3. Feed-forward (computation) is working
-        // 4. Residual connections are working
-        // 5. Shape preservation is working
-    }
-
-    #[test]
-    fn test_gpt_config_default() {
-        let config = GPTConfig::default();
-        assert_eq!(config.vocab_size, 65);
-        assert_eq!(config.block_size, 256);
-        assert_eq!(config.n_embd, 384);
-        assert_eq!(config.n_head, 6);
-        assert_eq!(config.n_layer, 6);
-        assert_eq!(config.dropout_rate, 0.1);
-    }
-
-    #[test]
-    fn test_gpt_model_creation() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 50,
-            block_size: 32,
-            n_embd: 64,
-            n_head: 4,
-            n_layer: 2, // Small for testing
-            dropout_rate: 0.1,
-        };
-
-        let model = GPTLanguageModel::new(config.clone(), vb).unwrap();
-        assert_eq!(model.config().vocab_size, 50);
-        assert_eq!(model.config().n_layer, 2);
-        assert_eq!(model.blocks.len(), 2);
-    }
-
-    #[test]
-    fn test_gpt_forward_training() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 30,
-            block_size: 16,
-            n_embd: 48,
-            n_head: 6,
-            n_layer: 2,
-            dropout_rate: 0.0, // No dropout for deterministic test
-        };
-
-        let model = GPTLanguageModel::new(config, vb).unwrap();
-
-        // Create input and target tensors with random integers in valid range
-        let batch_size = 2;
-        let seq_len = 8;
-        let inputs_data: Vec<u32> = (0..batch_size * seq_len)
-            .map(|_| fastrand::u32(0..30))
-            .collect();
-        let targets_data: Vec<u32> = (0..batch_size * seq_len)
-            .map(|_| fastrand::u32(0..30))
-            .collect();
-        let inputs = Tensor::from_vec(inputs_data, (batch_size, seq_len), &device).unwrap();
-        let targets = Tensor::from_vec(targets_data, (batch_size, seq_len), &device).unwrap();
-
-        // Forward pass with targets (training mode)
-        let (logits, loss) = model.forward(&inputs, Some(&targets), true).unwrap();
-
-        // Check output shapes
-        assert_eq!(logits.dims3().unwrap(), (batch_size, seq_len, 30));
-        assert!(loss.is_some());
-
-        // Loss should be a scalar
-        let loss_tensor = loss.unwrap();
-        assert_eq!(loss_tensor.dims().len(), 0); // Scalar
-    }
-
-    #[test]
-    fn test_gpt_forward_inference() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 25,
-            block_size: 12,
-            n_embd: 36,
-            n_head: 6,
-            n_layer: 1, // Single layer for speed
-            dropout_rate: 0.0,
-        };
-
-        let model = GPTLanguageModel::new(config, vb).unwrap();
-
-        let batch_size = 1;
-        let seq_len = 6;
-        let inputs_data: Vec<u32> = (0..batch_size * seq_len)
-            .map(|_| fastrand::u32(0..25))
-            .collect();
-        let inputs = Tensor::from_vec(inputs_data, (batch_size, seq_len), &device).unwrap();
-
-        // Forward pass without targets (inference mode)
-        let (logits, loss) = model.forward(&inputs, None, false).unwrap();
-
-        // Check output shapes
-        assert_eq!(logits.dims3().unwrap(), (batch_size, seq_len, 25));
-        assert!(loss.is_none());
-    }
-
-    #[test]
-    fn test_gpt_generate_next() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 20,
-            block_size: 8,
-            n_embd: 24,
-            n_head: 4,
-            n_layer: 1,
-            dropout_rate: 0.0,
-        };
-
-        let model = GPTLanguageModel::new(config, vb).unwrap();
-
-        let batch_size = 1;
-        let seq_len = 4;
-        let inputs_data: Vec<u32> = (0..batch_size * seq_len)
-            .map(|_| fastrand::u32(0..20))
-            .collect();
-        let inputs = Tensor::from_vec(inputs_data, (batch_size, seq_len), &device).unwrap();
-
-        // Generate next token
-        let next_token = model.generate_next(&inputs).unwrap();
-
-        // Should return (batch_size, 1) tensor
-        assert_eq!(next_token.dims2().unwrap(), (batch_size, 1));
-    }
-
-    #[test]
-    fn test_gpt_generate_sequence() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 15,
-            block_size: 10,
-            n_embd: 18,
-            n_head: 3,
-            n_layer: 1,
-            dropout_rate: 0.0,
-        };
-
-        let model = GPTLanguageModel::new(config, vb).unwrap();
-
-        let batch_size = 1;
-        let initial_seq_len = 2;
-        let max_new_tokens = 3;
-        let inputs_data: Vec<u32> = (0..batch_size * initial_seq_len)
-            .map(|_| fastrand::u32(0..15))
-            .collect();
-        let inputs = Tensor::from_vec(inputs_data, (batch_size, initial_seq_len), &device).unwrap();
-
-        // Generate sequence
-        let generated = model.generate(&inputs, max_new_tokens).unwrap();
-
-        // Should return sequence of length initial_seq_len + max_new_tokens
-        assert_eq!(
-            generated.dims2().unwrap(),
-            (batch_size, initial_seq_len + max_new_tokens)
-        );
-    }
-
-    #[test]
-    fn test_gpt_parameter_count() {
-        let device = Device::Cpu;
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-
-        let config = GPTConfig {
-            vocab_size: 10,
-            block_size: 8,
-            n_embd: 12,
-            n_head: 3,
-            n_layer: 1,
-            dropout_rate: 0.0,
-        };
-
-        let model = GPTLanguageModel::new(config, vb).unwrap();
-        let param_count = model.count_parameters();
-
-        // Should have a reasonable number of parameters
-        assert!(param_count > 0);
-
-        // Rough check: should be in the ballpark of our calculation
-        let expected_approx = 10 * 12 +        // token embeddings
-            8 * 12 +         // position embeddings  
-            1 * (4 * 12 * 12 + 8 * 12 * 12 + 2 * 12) + // transformer block
-            12 * 10 +        // lm_head
-            12; // final layer norm
-
-        // Should be within reasonable range
-        assert!(param_count >= expected_approx - 100);
-        assert!(param_count <= expected_approx + 100);
-    }
 }
