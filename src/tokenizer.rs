@@ -155,6 +155,16 @@ impl CharTokenizer {
         self.val_data.len()
     }
 
+    /// Access the full training data sequence
+    pub fn train_tokens(&self) -> &[usize] {
+        &self.train_data
+    }
+
+    /// Access the full validation data sequence
+    pub fn val_tokens(&self) -> &[usize] {
+        &self.val_data
+    }
+
     /// Print tokenizer statistics
     pub fn print_stats(&self) {
         println!("Tokenizer Statistics:");
@@ -174,7 +184,7 @@ impl CharTokenizer {
 }
 
 /// Enum for specifying which data split to use
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSplit {
     Train,
     Val,

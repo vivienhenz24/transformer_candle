@@ -71,11 +71,11 @@ fn main() -> Result<()> {
     let mut training_config = TrainingConfig::default();
     training_config.device = device.clone();
     training_config.block_size = gpt_config.block_size;
-    training_config.batch_size = 32; // Reasonable batch size
-    training_config.max_iters = 1000; // Enough iterations for demonstration
-    training_config.eval_interval = 100;
-    training_config.eval_iters = 50;
-    training_config.learning_rate = 3e-4; // Conservative learning rate
+    training_config.batch_size = 128;
+    training_config.max_iters = 20000;
+    training_config.eval_interval = 500;
+    training_config.eval_iters = 200;
+    training_config.learning_rate = 3e-4; // Conservative base learning rate
 
     println!(" Training configuration:");
     println!("      - Learning rate: {}", training_config.learning_rate);
@@ -260,6 +260,7 @@ fn check_available_backends() {
 fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokenizer) -> Result<()> {
     println!("Type a prompt and press Enter to generate text.");
     println!("Submit an empty prompt or press Ctrl+D to exit.\n");
+    println!("Using sampling settings: max_tokens=200, temperature=0.2, top-k=10, top-p=0.9\n");
 
     let stdin = io::stdin();
     loop {
@@ -284,9 +285,18 @@ fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokeniz
 
         let max_tokens = 200usize;
         let temperature = 0.2f64;
-        let top_k = Some(50usize);
+        let top_k = Some(10usize);
+        let top_p = Some(0.9f64);
 
-        match generate_single_sample(model, tokenizer, prompt, max_tokens, temperature, top_k) {
+        match generate_single_sample(
+            model,
+            tokenizer,
+            prompt,
+            max_tokens,
+            temperature,
+            top_k,
+            top_p,
+        ) {
             Ok(generated_text) => {
                 println!("\n{}\n", "=".repeat(60));
                 println!("{}", generated_text);
@@ -307,6 +317,7 @@ fn generate_single_sample(
     max_tokens: usize,
     temperature: f64,
     top_k: Option<usize>,
+    top_p: Option<f64>,
 ) -> Result<String> {
     // Encode the prompt
     let prompt_tokens = tokenizer.encode(prompt);
@@ -325,7 +336,7 @@ fn generate_single_sample(
 
     // Generate tokens
     let generated_tensor = model
-        .generate_with_sampling(&prompt_tensor, max_tokens, temperature, top_k)
+        .generate_with_sampling(&prompt_tensor, max_tokens, temperature, top_k, top_p)
         .context("Failed to generate tokens")?;
 
     // Convert back to text

@@ -515,6 +515,7 @@ impl GPTLanguageModel {
         max_new_tokens: usize,
         temperature: f64,
         top_k: Option<usize>,
+        top_p: Option<f64>,
     ) -> CandleResult<Tensor> {
         let (_batch_size, _initial_seq_len) = context.dims2()?;
 
@@ -540,7 +541,7 @@ impl GPTLanguageModel {
             let last_logits = logits.narrow(1, logits.dim(1)? - 1, 1)?; // (batch_size, 1, vocab_size)
             let last_logits = last_logits.squeeze(1)?; // (batch_size, vocab_size)
 
-            let next_token = sample_next_token(&last_logits, temperature, top_k)?; // (batch_size, 1)
+            let next_token = sample_next_token(&last_logits, temperature, top_k, top_p)?; // (batch_size, 1)
 
             // Append the sampled token to the current sequence
             current_sequence = Tensor::cat(&[current_sequence, next_token], 1)?;
@@ -551,7 +552,7 @@ impl GPTLanguageModel {
 
     /// Generate using default sampling parameters (temperature=1.0, no top-k).
     pub fn generate(&self, context: &Tensor, max_new_tokens: usize) -> CandleResult<Tensor> {
-        self.generate_with_sampling(context, max_new_tokens, 1.0, None)
+        self.generate_with_sampling(context, max_new_tokens, 1.0, None, None)
     }
 
     /// Get the model configuration
@@ -584,6 +585,7 @@ fn sample_next_token(
     logits: &Tensor,
     temperature: f64,
     top_k: Option<usize>,
+    top_p: Option<f64>,
 ) -> CandleResult<Tensor> {
     let (batch_size, _vocab_size) = logits.dims2()?;
     let device = logits.device();
@@ -591,14 +593,19 @@ fn sample_next_token(
     let mut sampled_tokens = Vec::with_capacity(batch_size);
 
     for row in logits_vec.iter() {
-        let idx = sample_from_logits_row(row, temperature, top_k);
+        let idx = sample_from_logits_row(row, temperature, top_k, top_p);
         sampled_tokens.push(idx as u32);
     }
 
     Tensor::from_vec(sampled_tokens, (batch_size, 1), device)
 }
 
-fn sample_from_logits_row(logits: &[f32], temperature: f64, top_k: Option<usize>) -> usize {
+fn sample_from_logits_row(
+    logits: &[f32],
+    temperature: f64,
+    top_k: Option<usize>,
+    top_p: Option<f64>,
+) -> usize {
     if logits.is_empty() {
         return 0;
     }
@@ -649,16 +656,50 @@ fn sample_from_logits_row(logits: &[f32], temperature: f64, top_k: Option<usize>
         return fastrand::usize(0..adjusted.len());
     }
 
+    let mut probabilities: Vec<f32> = exp_values.iter().map(|value| value / sum).collect();
+
+    if let Some(p_threshold) = top_p {
+        let mut pairs: Vec<(usize, f32)> = probabilities.iter().cloned().enumerate().collect();
+        pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut cumulative = 0.0f32;
+        let mut allowed = vec![false; probabilities.len()];
+        for (idx, prob) in pairs {
+            cumulative += prob;
+            allowed[idx] = true;
+            if cumulative >= p_threshold as f32 {
+                break;
+            }
+        }
+
+        for (idx, prob) in probabilities.iter_mut().enumerate() {
+            if !allowed[idx] {
+                *prob = 0.0;
+            }
+        }
+
+        let renorm: f32 = probabilities.iter().sum();
+        if renorm > f32::EPSILON {
+            for prob in probabilities.iter_mut() {
+                *prob /= renorm;
+            }
+        }
+    }
+
     let mut cumulative = 0.0;
     let sample = fastrand::f32();
-    for (idx, value) in exp_values.iter().enumerate() {
-        cumulative += value / sum;
+    for (idx, prob) in probabilities.iter().enumerate() {
+        cumulative += *prob;
         if sample <= cumulative {
             return idx;
         }
     }
 
-    exp_values.len() - 1
+    probabilities
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
