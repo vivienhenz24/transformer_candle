@@ -5,12 +5,130 @@ mod training;
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
 use candle_nn::VarMap;
-use std::io::{self, Write};
-use std::path::Path;
+use std::{
+    env,
+    io::{self, Write},
+    path::Path,
+};
 
-use gpt::GPTLanguageModel;
+use gpt::{GPTConfig, GPTLanguageModel};
 use tokenizer::{CharTokenizer, DataSplit};
 use training::{create_medium_gpt_config, train_model, TrainingConfig};
+
+#[derive(Debug, Clone, Copy)]
+enum TrainingPreset {
+    Light,
+    Balanced,
+    Max,
+}
+
+fn preset_from_str(value: &str) -> Option<TrainingPreset> {
+    match value.trim().to_lowercase().as_str() {
+        "light" | "small" => Some(TrainingPreset::Light),
+        "balanced" | "medium" | "default" => Some(TrainingPreset::Balanced),
+        "max" | "heavy" | "large" => Some(TrainingPreset::Max),
+        _ => None,
+    }
+}
+
+fn parse_training_preset() -> TrainingPreset {
+    let mut preset = TrainingPreset::Light;
+
+    if let Ok(env_value) = env::var("TRAINING_PRESET") {
+        if let Some(parsed) = preset_from_str(&env_value) {
+            preset = parsed;
+        }
+    }
+
+    let mut args = env::args().skip(1).peekable();
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--preset=") {
+            if let Some(parsed) = preset_from_str(value) {
+                preset = parsed;
+            }
+        } else if arg == "--preset" {
+            if let Some(value) = args.next() {
+                if let Some(parsed) = preset_from_str(&value) {
+                    preset = parsed;
+                }
+            }
+        }
+    }
+
+    preset
+}
+
+fn preset_label(preset: TrainingPreset) -> &'static str {
+    match preset {
+        TrainingPreset::Light => "light",
+        TrainingPreset::Balanced => "balanced",
+        TrainingPreset::Max => "max",
+    }
+}
+
+fn apply_training_preset(
+    preset: TrainingPreset,
+    gpt_config: &mut GPTConfig,
+    training_config: &mut TrainingConfig,
+) {
+    match preset {
+        TrainingPreset::Light => {
+            gpt_config.block_size = 256;
+            gpt_config.n_embd = 384;
+            gpt_config.n_head = 6;
+            gpt_config.n_layer = 4;
+
+            training_config.batch_size = 32;
+            training_config.block_size = gpt_config.block_size;
+            training_config.learning_rate = 4e-4;
+            training_config.max_iters = 12000;
+            training_config.eval_interval = 300;
+            training_config.warmup_steps = 500;
+            training_config.checkpoint_interval = 600;
+            training_config.eval_iters = 150;
+        }
+        TrainingPreset::Balanced => {
+            gpt_config.block_size = 256;
+            gpt_config.n_embd = 384;
+            gpt_config.n_head = 6;
+            gpt_config.n_layer = 6;
+
+            training_config.batch_size = 48;
+            training_config.block_size = gpt_config.block_size;
+            training_config.learning_rate = 5e-4;
+            training_config.max_iters = 15000;
+            training_config.eval_interval = 400;
+            training_config.warmup_steps = 800;
+            training_config.checkpoint_interval = 800;
+            training_config.eval_iters = 200;
+        }
+        TrainingPreset::Max => {
+            gpt_config.block_size = 384;
+            gpt_config.n_embd = 512;
+            gpt_config.n_head = 8;
+            gpt_config.n_layer = 6;
+
+            training_config.batch_size = 96;
+            training_config.block_size = gpt_config.block_size;
+            training_config.learning_rate = 6e-4;
+            training_config.max_iters = 25000;
+            training_config.eval_interval = 500;
+            training_config.warmup_steps = 1200;
+            training_config.checkpoint_interval = 1000;
+            training_config.eval_iters = 250;
+        }
+    }
+
+    training_config.block_size = gpt_config.block_size;
+    training_config.eval_interval = training_config
+        .eval_interval
+        .clamp(1, training_config.max_iters.max(1));
+    training_config.checkpoint_interval = training_config
+        .checkpoint_interval
+        .max(200)
+        .min(training_config.max_iters.max(200));
+    training_config.eval_iters = training_config.eval_iters.max(50);
+}
 
 /// Main function that orchestrates the complete GPT training and text generation pipeline
 fn main() -> Result<()> {
@@ -43,9 +161,12 @@ fn main() -> Result<()> {
     println!("✅ Dataset loaded successfully!");
     tokenizer.print_stats();
 
-    // Step 5: Create GPT model with appropriate hyperparameters
+    // Step 5: Create GPT model with preset-specific hyperparameters
     println!("\n Creating GPT model...");
-    let gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
+    let mut gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
+    let mut training_config = TrainingConfig::default();
+    let preset = parse_training_preset();
+    apply_training_preset(preset, &mut gpt_config, &mut training_config);
 
     // Create variable map for model parameters
     let mut varmap = VarMap::new();
@@ -68,16 +189,10 @@ fn main() -> Result<()> {
 
     // Step 6: Configure training parameters
     println!("\n Setting up training configuration...");
-    let mut training_config = TrainingConfig::default();
     training_config.device = device.clone();
-    training_config.block_size = gpt_config.block_size;
-    training_config.batch_size = 128;
-    training_config.max_iters = 20000;
-    training_config.eval_interval = 500;
-    training_config.eval_iters = 200;
-    training_config.learning_rate = 3e-4; // Conservative base learning rate
 
     println!(" Training configuration:");
+    println!("      - Preset: {}", preset_label(preset));
     println!("      - Learning rate: {}", training_config.learning_rate);
     println!("      - Batch size: {}", training_config.batch_size);
     println!("      - Block size: {}", training_config.block_size);
@@ -85,6 +200,11 @@ fn main() -> Result<()> {
     println!(
         "      - Evaluation interval: {}",
         training_config.eval_interval
+    );
+    println!("      - Warmup steps: {}", training_config.warmup_steps);
+    println!(
+        "      - Checkpoint interval: {}",
+        training_config.checkpoint_interval
     );
 
     // Step 7: Validate data splits

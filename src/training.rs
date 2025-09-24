@@ -50,12 +50,12 @@ pub struct TrainingConfig {
 impl Default for TrainingConfig {
     fn default() -> Self {
         TrainingConfig {
-            learning_rate: 6e-4, // Initial learning rate
-            batch_size: 128,     // Larger batch size for better gradient estimates
-            block_size: 384,     // Longer context window
-            max_iters: 20000,    // Extended training schedule
-            eval_interval: 500,  // Evaluate less frequently due to longer training
-            eval_iters: 200,     // Average over 200 eval batches
+            learning_rate: 5e-4, // Base learning rate for balanced preset
+            batch_size: 48,      // Micro-batch size per optimizer step
+            block_size: 256,     // Context window length
+            max_iters: 15000,    // Balanced training schedule
+            eval_interval: 400,  // Evaluate periodically without too much overhead
+            eval_iters: 200,     // Average validation over multiple batches
             weight_decay: 1e-2,  // Slight regularization for AdamW
             beta1: 0.9,          // AdamW beta1
             beta2: 0.95,         // AdamW beta2 (slightly lower than default)
@@ -63,8 +63,8 @@ impl Default for TrainingConfig {
             device: Device::Cpu, // Default to CPU
             log_interval: 1,     // Log every iteration by default
             compile: false,      // Don't compile by default
-            warmup_steps: 1000,  // Learning-rate warmup duration
-            checkpoint_interval: 1000,
+            warmup_steps: 800,   // Learning-rate warmup duration
+            checkpoint_interval: 800,
             checkpoint_dir: "checkpoints".to_string(),
             grad_clip: 1.0, // Clip gradients to this L2 norm
         }
@@ -519,9 +519,9 @@ pub fn create_small_gpt_config(vocab_size: usize) -> GPTConfig {
 pub fn create_medium_gpt_config(vocab_size: usize) -> GPTConfig {
     GPTConfig {
         vocab_size,
-        block_size: 384,   // Extended context length
-        n_embd: 512,       // Wider embedding dimension
-        n_head: 8,         // More attention heads
+        block_size: 256,   // Balanced context length
+        n_embd: 384,       // Balanced embedding dimension
+        n_head: 6,         // Attention heads
         n_layer: 6,        // 6 transformer layers
         dropout_rate: 0.0, // Disable dropout for faster convergence on character data
     }
@@ -534,16 +534,16 @@ mod tests {
     #[test]
     fn test_training_config_default() {
         let config = TrainingConfig::default();
-        assert_eq!(config.learning_rate, 6e-4);
-        assert_eq!(config.batch_size, 128);
-        assert_eq!(config.block_size, 384);
-        assert_eq!(config.max_iters, 20000);
-        assert_eq!(config.eval_interval, 500);
+        assert_eq!(config.learning_rate, 5e-4);
+        assert_eq!(config.batch_size, 48);
+        assert_eq!(config.block_size, 256);
+        assert_eq!(config.max_iters, 15000);
+        assert_eq!(config.eval_interval, 400);
         assert_eq!(config.beta1, 0.9);
         assert_eq!(config.beta2, 0.95);
         assert_eq!(config.weight_decay, 1e-2);
-        assert_eq!(config.warmup_steps, 1000);
-        assert_eq!(config.checkpoint_interval, 1000);
+        assert_eq!(config.warmup_steps, 800);
+        assert_eq!(config.checkpoint_interval, 800);
         assert!((config.grad_clip - 1.0).abs() < f64::EPSILON);
     }
 
@@ -562,9 +562,9 @@ mod tests {
     fn test_medium_gpt_config() {
         let config = create_medium_gpt_config(100);
         assert_eq!(config.vocab_size, 100);
-        assert_eq!(config.block_size, 384);
-        assert_eq!(config.n_embd, 512);
-        assert_eq!(config.n_head, 8);
+        assert_eq!(config.block_size, 256);
+        assert_eq!(config.n_embd, 384);
+        assert_eq!(config.n_head, 6);
         assert_eq!(config.n_layer, 6);
         assert_eq!(config.dropout_rate, 0.0);
     }
@@ -575,7 +575,7 @@ mod tests {
             iteration: 100,
             train_loss: 2.5,
             val_loss: 2.7,
-            learning_rate: 6e-4,
+            learning_rate: 5e-4,
             tokens_per_sec: 1000.0,
             elapsed_time: 120.0,
             train_perplexity: 12.2,
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(stats.iteration, 100);
         assert_eq!(stats.train_loss, 2.5);
         assert_eq!(stats.val_loss, 2.7);
-        assert_eq!(stats.learning_rate, 6e-4);
+        assert_eq!(stats.learning_rate, 5e-4);
         assert_eq!(stats.tokens_per_sec, 1000.0);
         assert_eq!(stats.elapsed_time, 120.0);
         assert_eq!(stats.train_perplexity, 12.2);
