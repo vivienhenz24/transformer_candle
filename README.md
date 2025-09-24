@@ -1,6 +1,6 @@
 # transformer_candle
 
-I built a transformer using rust/[candle](https://github.com/huggingface/candle). Because why not ;)
+I built a transformer using rust/[candle](https://github.com/huggingface/candle). Because we do a little trolling ;)
 
 ## Usage
 
