@@ -1,6 +1,7 @@
 mod gpt;
 mod tokenizer;
 mod training;
+mod utils;
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
@@ -14,6 +15,7 @@ use std::{
 use gpt::{GPTConfig, GPTLanguageModel};
 use tokenizer::{CharTokenizer, DataSplit};
 use training::{create_medium_gpt_config, train_model, TrainingConfig};
+use utils::prompts::build_prompt;
 
 #[derive(Debug, Clone, Copy)]
 enum TrainingPreset {
@@ -408,10 +410,12 @@ fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokeniz
         let top_k = Some(10usize);
         let top_p = Some(0.9f64);
 
+        let composed_prompt = build_prompt(prompt);
+
         match generate_single_sample(
             model,
             tokenizer,
-            prompt,
+            &composed_prompt,
             max_tokens,
             temperature,
             top_k,
@@ -469,9 +473,12 @@ fn generate_single_sample(
 
     let generated_indices: Vec<usize> = generated_indices.iter().map(|&x| x as usize).collect();
 
-    let generated_text = tokenizer.decode(&generated_indices);
-
-    Ok(generated_text)
+    let assistant_start = prompt_tokens.len();
+    if generated_indices.len() > assistant_start {
+        Ok(tokenizer.decode(&generated_indices[assistant_start..]))
+    } else {
+        Ok(String::new())
+    }
 }
 
 #[cfg(test)]
