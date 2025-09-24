@@ -18,6 +18,6 @@ Available presets:
 - `max` – pushes width/context and batch size; expect higher VRAM and longer runs
 
 After training an interactive REPL launches. Sampling uses `max_tokens=200`,
-`temperature=0.2`, `top-k=10`, and `top-p=0.9` by default; edit `src/main.rs`
+`temperature=0.7`, `top-k=40`, and `top-p=0.95` by default; edit `src/main.rs`
 if you want different defaults. The system/user prompt template lives in
 `utils/src/prompts.rs`.

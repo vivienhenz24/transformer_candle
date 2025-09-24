@@ -224,6 +224,12 @@ pub fn train_model(
                     stats.tokens_per_sec,
                     stats.elapsed_time
                 );
+
+                if let Ok(sample) = generate_preview(model, tokenizer) {
+                    println!("--- preview ({} chars) ---", sample.len());
+                    println!("{}", sample);
+                    println!("---------------------------");
+                }
             }
 
             last_log_time = current_time;
@@ -252,6 +258,27 @@ pub fn train_model(
     }
 
     Ok(training_stats)
+}
+
+fn generate_preview(model: &GPTLanguageModel, tokenizer: &CharTokenizer) -> CandleResult<String> {
+    let prompt = build_prompt("ROMEO:");
+    let prompt_tokens = tokenizer.encode(&prompt);
+    if prompt_tokens.is_empty() {
+        return Ok(String::new());
+    }
+
+    let prompt_tensor = tokenizer.indices_to_tensor(&prompt_tokens)?.unsqueeze(0)?;
+    let generated = model.generate(&prompt_tensor, 200)?;
+
+    let flat = generated.get(0)?;
+    let indices = flat.to_vec1::<u32>()?;
+    let indices: Vec<usize> = indices.into_iter().map(|v| v as usize).collect();
+
+    if indices.len() > prompt_tokens.len() {
+        Ok(tokenizer.decode(&indices[prompt_tokens.len()..]))
+    } else {
+        Ok(String::new())
+    }
 }
 
 /// Convenience function to run training with default configuration

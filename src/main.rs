@@ -390,9 +390,9 @@ fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokeniz
         }
 
         let max_tokens = 200usize;
-        let temperature = 0.2f64;
-        let top_k = Some(10usize);
-        let top_p = Some(0.9f64);
+        let temperature = 0.7f64;
+        let top_k = Some(40usize);
+        let top_p = Some(0.95f64);
 
         let composed_prompt = build_prompt(prompt);
 
