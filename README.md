@@ -2,6 +2,8 @@
 
 I built a transformer using rust/[candle](https://github.com/huggingface/candle). Because we do a little trolling ;)
 
+
+(there is no rational reason for building a transformer from scratch in rust, apart from that it would be fun)
 ## Usage
 
 1. Place your training corpus at `pt-data/input.txt` (Shakespeare is bundled).
