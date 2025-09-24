@@ -1,7 +1,6 @@
 mod gpt;
 mod tokenizer;
 mod training;
-mod utils;
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
@@ -85,8 +84,6 @@ fn apply_training_preset(
             training_config.learning_rate = 4e-4;
             training_config.max_iters = 12000;
             training_config.eval_interval = 300;
-            training_config.warmup_steps = 500;
-            training_config.checkpoint_interval = 600;
             training_config.eval_iters = 150;
         }
         TrainingPreset::Balanced => {
@@ -100,8 +97,6 @@ fn apply_training_preset(
             training_config.learning_rate = 5e-4;
             training_config.max_iters = 15000;
             training_config.eval_interval = 400;
-            training_config.warmup_steps = 800;
-            training_config.checkpoint_interval = 800;
             training_config.eval_iters = 200;
         }
         TrainingPreset::Max => {
@@ -115,8 +110,6 @@ fn apply_training_preset(
             training_config.learning_rate = 6e-4;
             training_config.max_iters = 25000;
             training_config.eval_interval = 500;
-            training_config.warmup_steps = 1200;
-            training_config.checkpoint_interval = 1000;
             training_config.eval_iters = 250;
         }
     }
@@ -125,10 +118,6 @@ fn apply_training_preset(
     training_config.eval_interval = training_config
         .eval_interval
         .clamp(1, training_config.max_iters.max(1));
-    training_config.checkpoint_interval = training_config
-        .checkpoint_interval
-        .max(200)
-        .min(training_config.max_iters.max(200));
     training_config.eval_iters = training_config.eval_iters.max(50);
 }
 
@@ -202,11 +191,6 @@ fn main() -> Result<()> {
     println!(
         "      - Evaluation interval: {}",
         training_config.eval_interval
-    );
-    println!("      - Warmup steps: {}", training_config.warmup_steps);
-    println!(
-        "      - Checkpoint interval: {}",
-        training_config.checkpoint_interval
     );
 
     // Step 7: Validate data splits

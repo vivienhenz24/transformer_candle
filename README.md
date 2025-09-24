@@ -1,6 +1,6 @@
-# transformer_candle (Rust)
+# transformer_candle
 
-I built a transformer using rust/[Candle](https://github.com/huggingface/candle)..  Because why not ;)
+I built a transformer using rust/[candle](https://github.com/huggingface/candle). Because why not ;)
 
 ## Usage
 
@@ -16,3 +16,8 @@ Available presets:
 - `light` *(default)* – tuned for Apple M-series laptops (smaller context, batch 32-48)
 - `balanced` – larger width/context while still feasible on consumer GPUs
 - `max` – pushes width/context and batch size; expect higher VRAM and longer runs
+
+After training an interactive REPL launches. Sampling uses `max_tokens=200`,
+`temperature=0.2`, `top-k=10`, and `top-p=0.9` by default; edit `src/main.rs`
+if you want different defaults. The system/user prompt template lives in
+`utils/src/prompts.rs`.
