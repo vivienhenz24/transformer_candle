@@ -1,0 +1,11 @@
+[package]
+name = "transformer-tokenization"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.90"
+candle-core = "0.9.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+fastrand = "2.0"

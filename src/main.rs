@@ -1,24 +1,24 @@
 use anyhow::{Context, Result};
-use candle_core::DType;
+use cascade_core::{
+    CascadeTransformer,
+    CascadeTransformerBuilder,
+    CreativeMode,
+    CreativePalette,
+    ProgressiveGenerationConfig,
+    ProgressiveRefiner,
+};
+use cascade_training::{train_model, TrainingConfig};
+use candle_core::{DType, Tensor};
 use candle_nn::VarMap;
 use std::{
     env,
     io::{self, Write},
     path::Path,
 };
-
-use transformer::{
-    check_available_backends,
-    create_medium_gpt_config,
-    train_model,
-    setup_device,
-    CharTokenizer,
-    DataSplit,
-    GPTConfig,
-    GPTLanguageModel,
-    TrainingConfig,
-};
+use transformer_tokenization::{AdvancedTokenizer, TokenizerConfig};
 use utils::prompts::build_prompt;
+
+use transformer::{check_available_backends, setup_device};
 
 #[derive(Debug, Clone, Copy)]
 enum TrainingPreset {
@@ -27,39 +27,38 @@ enum TrainingPreset {
     Max,
 }
 
-fn preset_from_str(value: &str) -> Option<TrainingPreset> {
-    match value.trim().to_lowercase().as_str() {
-        "light" | "small" => Some(TrainingPreset::Light),
-        "balanced" | "medium" | "default" => Some(TrainingPreset::Balanced),
-        "max" | "heavy" | "large" => Some(TrainingPreset::Max),
-        _ => None,
+impl TrainingPreset {
+    fn from_str(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "light" | "small" => Some(TrainingPreset::Light),
+            "balanced" | "medium" | "default" => Some(TrainingPreset::Balanced),
+            "max" | "heavy" | "large" => Some(TrainingPreset::Max),
+            _ => None,
+        }
     }
 }
 
 fn parse_training_preset() -> TrainingPreset {
-    let mut preset = TrainingPreset::Light;
-
+    let mut preset = TrainingPreset::Balanced;
     if let Ok(env_value) = env::var("TRAINING_PRESET") {
-        if let Some(parsed) = preset_from_str(&env_value) {
+        if let Some(parsed) = TrainingPreset::from_str(&env_value) {
             preset = parsed;
         }
     }
-
-    let mut args = env::args().skip(1).peekable();
+    let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         if let Some(value) = arg.strip_prefix("--preset=") {
-            if let Some(parsed) = preset_from_str(value) {
+            if let Some(parsed) = TrainingPreset::from_str(value) {
                 preset = parsed;
             }
         } else if arg == "--preset" {
             if let Some(value) = args.next() {
-                if let Some(parsed) = preset_from_str(&value) {
+                if let Some(parsed) = TrainingPreset::from_str(&value) {
                     preset = parsed;
                 }
             }
         }
     }
-
     preset
 }
 
@@ -71,311 +70,134 @@ fn preset_label(preset: TrainingPreset) -> &'static str {
     }
 }
 
-fn apply_training_preset(
-    preset: TrainingPreset,
-    gpt_config: &mut GPTConfig,
-    training_config: &mut TrainingConfig,
-) {
+fn configure_model(preset: TrainingPreset, vocab_size: usize) -> CascadeTransformerBuilder {
     match preset {
-        TrainingPreset::Light => {
-            gpt_config.block_size = 256;
-            gpt_config.n_embd = 384;
-            gpt_config.n_head = 6;
-            gpt_config.n_layer = 4;
-
-            training_config.batch_size = 32;
-            training_config.block_size = gpt_config.block_size;
-            training_config.learning_rate = 4e-4;
-            training_config.max_iters = 12000;
-            training_config.eval_interval = 300;
-            training_config.eval_iters = 150;
-        }
-        TrainingPreset::Balanced => {
-            gpt_config.block_size = 256;
-            gpt_config.n_embd = 384;
-            gpt_config.n_head = 6;
-            gpt_config.n_layer = 6;
-
-            training_config.batch_size = 48;
-            training_config.block_size = gpt_config.block_size;
-            training_config.learning_rate = 5e-4;
-            training_config.max_iters = 15000;
-            training_config.eval_interval = 400;
-            training_config.eval_iters = 200;
-        }
-        TrainingPreset::Max => {
-            gpt_config.block_size = 384;
-            gpt_config.n_embd = 512;
-            gpt_config.n_head = 8;
-            gpt_config.n_layer = 6;
-
-            training_config.batch_size = 96;
-            training_config.block_size = gpt_config.block_size;
-            training_config.learning_rate = 6e-4;
-            training_config.max_iters = 25000;
-            training_config.eval_interval = 500;
-            training_config.eval_iters = 250;
-        }
+        TrainingPreset::Light => CascadeTransformerBuilder::new(vocab_size)
+            .block_size(256)
+            .model_width(320)
+            .layers(4, 5)
+            .dropout(0.05),
+        TrainingPreset::Balanced => CascadeTransformerBuilder::new(vocab_size)
+            .block_size(256)
+            .model_width(384)
+            .layers(6, 6)
+            .dropout(0.1),
+        TrainingPreset::Max => CascadeTransformerBuilder::new(vocab_size)
+            .block_size(384)
+            .model_width(512)
+            .layers(8, 8)
+            .dropout(0.1),
     }
-
-    training_config.block_size = gpt_config.block_size;
-    training_config.eval_interval = training_config
-        .eval_interval
-        .clamp(1, training_config.max_iters.max(1));
-    training_config.eval_iters = training_config.eval_iters.max(50);
 }
 
-/// Main function that orchestrates the complete GPT training and text generation pipeline
+fn configure_training(preset: TrainingPreset, device: candle_core::Device) -> TrainingConfig {
+    let mut config = TrainingConfig::default();
+    config.device = device;
+    match preset {
+        TrainingPreset::Light => {
+            config.batch_size = 32;
+            config.max_iters = 8000;
+            config.eval_interval = 250;
+        }
+        TrainingPreset::Balanced => {
+            config.batch_size = 48;
+            config.max_iters = 12000;
+        }
+        TrainingPreset::Max => {
+            config.batch_size = 96;
+            config.max_iters = 20000;
+            config.eval_interval = 500;
+        }
+    }
+    config
+}
+
 fn main() -> Result<()> {
-    println!("Transformer in Rust");
+    println!("Cascade Transformer (Rust + Candle)");
     println!("==========================================\n");
 
-    // Step 1: Check available backends and system info
     check_available_backends();
     println!();
 
-    // Step 2: Device setup with detailed debugging
     let device = setup_device()?;
-    println!("📱 Final device selection: {:?}\n", device);
+    println!("Device: {:?}\n", device);
 
-    // Step 3: Load and process Shakespeare text
-    println!("Loading Shakespeare dataset");
     let data_path = "pt-data/input.txt";
-
     if !Path::new(data_path).exists() {
-        return Err(anyhow::anyhow!(
-            "Data file not found: {}. Please ensure the Shakespeare text file is available.",
-            data_path
-        ));
+        anyhow::bail!("Data file not found: {data_path}");
     }
 
-    let tokenizer = CharTokenizer::from_file(data_path, device.clone())
-        .context("Failed to create tokenizer from Shakespeare data")?;
+    let tokenizer_cfg = TokenizerConfig::default();
+    let tokenizer = AdvancedTokenizer::from_file(data_path, device.clone(), tokenizer_cfg)
+        .context("Failed to create tokenizer")?;
+    println!(
+        "Tokenizer ready: vocab {} | train tokens {} | val tokens {}",
+        tokenizer.vocab_size(),
+        tokenizer.train_len(),
+        tokenizer.val_len()
+    );
 
-    // Step 4: Display dataset statistics
-    println!("✅ Dataset loaded successfully!");
-    tokenizer.print_stats();
-
-    // Step 5: Create GPT model with preset-specific hyperparameters
-    println!("\n Creating GPT model...");
-    let mut gpt_config = create_medium_gpt_config(tokenizer.vocab_size);
-    let mut training_config = TrainingConfig::default();
     let preset = parse_training_preset();
-    apply_training_preset(preset, &mut gpt_config, &mut training_config);
+    println!("Using preset: {}", preset_label(preset));
 
-    // Create variable map for model parameters
+    let builder = configure_model(preset, tokenizer.vocab_size());
     let mut varmap = VarMap::new();
     let vb = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
+    let model = builder
+        .build(vb)
+        .context("Failed to build Cascade Transformer")?;
+    println!("Model parameters: ~{}", model.count_parameters());
 
-    let model =
-        GPTLanguageModel::new(gpt_config.clone(), vb).context("Failed to create GPT model")?;
-
-    // Step 5: Print model information
-    let param_count = model.count_parameters();
-    println!("GPT model created successfully!");
-    println!("    Model Statistics:");
-    println!("      - Vocabulary size: {}", gpt_config.vocab_size);
-    println!("      - Block size (context): {}", gpt_config.block_size);
-    println!("      - Embedding dimension: {}", gpt_config.n_embd);
-    println!("      - Number of layers: {}", gpt_config.n_layer);
-    println!("      - Number of attention heads: {}", gpt_config.n_head);
-    println!("      - Total parameters: ~{}", param_count);
-    println!("      - Dropout rate: {}", gpt_config.dropout_rate);
-
-    // Step 6: Configure training parameters
-    println!("\n Setting up training configuration...");
-    training_config.device = device.clone();
-
-    println!(" Training configuration:");
-    println!("      - Preset: {}", preset_label(preset));
-    println!("      - Learning rate: {}", training_config.learning_rate);
-    println!("      - Batch size: {}", training_config.batch_size);
-    println!("      - Block size: {}", training_config.block_size);
-    println!("      - Max iterations: {}", training_config.max_iters);
+    let mut training_config = configure_training(preset, device.clone());
+    training_config.block_size = model.config.block_size;
     println!(
-        "      - Evaluation interval: {}",
-        training_config.eval_interval
+        "Training configuration: batch={} max_iters={} block={}",
+        training_config.batch_size, training_config.max_iters, training_config.block_size
     );
 
-    // Step 7: Validate data splits
-    println!("\n Validating data splits...");
-    match tokenizer.get_batch(DataSplit::Train, 4, training_config.block_size) {
-        Ok((inputs, targets)) => {
-            println!(
-                " Training data: {} batches available",
-                inputs.shape().dims()[0]
-            );
-            println!("   - Input shape: {:?}", inputs.shape());
-            println!("   - Target shape: {:?}", targets.shape());
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("Training data validation failed: {}", e));
-        }
-    }
-
-    match tokenizer.get_batch(DataSplit::Val, 4, training_config.block_size) {
-        Ok((inputs, targets)) => {
-            println!(
-                " Validation data: {} batches available",
-                inputs.shape().dims()[0]
-            );
-            println!("   - Input shape: {:?}", inputs.shape());
-            println!("   - Target shape: {:?}", targets.shape());
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("Validation data validation failed: {}", e));
-        }
-    }
-
-    // Step 8: Run training loop
-    println!("\n Starting training...");
-    println!("====================================");
-
-    let training_stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
+    let stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
         .context("Training failed")?;
-
-    println!("====================================");
-    println!(" Training completed successfully!");
-
-    if let Some(final_stats) = training_stats.last() {
-        println!(" Final Training Statistics:");
-        println!("   - Final training loss: {:.4}", final_stats.train_loss);
-        println!("   - Final validation loss: {:.4}", final_stats.val_loss);
-        println!("   - Average tokens/sec: {:.0}", final_stats.tokens_per_sec);
-        println!("   - Total training time: {:.1}s", final_stats.elapsed_time);
-        println!(
-            "   - Training iterations completed: {}",
-            training_stats.len()
-        );
+    if let Some(last) = stats.last() {
+        println!("Final train loss: {:.4} | val loss: {:.4}", last.train_loss, last.val_loss);
     }
 
-    // Step 9: Run interactive text generation loop
-    println!("\n Starting interactive text generation...");
-    println!("============================================");
-    interactive_generation_loop(&model, &tokenizer)
-        .context("Interactive text generation failed")?;
-
-    // Step 10: Final summary
-    println!("\n GPT Training and Generation Complete.");
-    println!("========================================");
-    println!(" Successfully completed all steps:");
-    println!(
-        "   1. Loaded Shakespeare dataset ({} characters)",
-        tokenizer.vocab_size
-    );
-    println!(
-        "   2. Created and configured GPT model ({} parameters)",
-        param_count
-    );
-    println!(
-        "   3. Trained model for {} iterations",
-        training_config.max_iters
-    );
-    println!("   4. Generated text samples interactively with trained model");
-    println!("\n Ready for production use or further training!");
-
+    interactive_generation_loop(&model, &tokenizer)?;
     Ok(())
 }
 
-/// Interactive loop allowing the user to provide prompts and control output length.
-fn interactive_generation_loop(model: &GPTLanguageModel, tokenizer: &CharTokenizer) -> Result<()> {
-    println!("Type a prompt and press Enter to generate text.");
-    println!("Submit an empty prompt or press Ctrl+D to exit.\n");
-    println!("Using sampling settings: max_tokens=200, temperature=0.2, top-k=10, top-p=0.9\n");
-
+fn interactive_generation_loop(model: &CascadeTransformer, tokenizer: &AdvancedTokenizer) -> Result<()> {
+    println!("\nInteractive generation. Empty prompt to exit.\n");
+    let palette = CreativePalette::new(CreativeMode::Dramatic);
+    let progressive = ProgressiveRefiner::new(ProgressiveGenerationConfig::default());
     let stdin = io::stdin();
     loop {
         print!("Prompt> ");
-        io::stdout().flush().context("Failed to flush stdout")?;
-
+        io::stdout().flush()?;
         let mut prompt = String::new();
-        let bytes_read = stdin
-            .read_line(&mut prompt)
-            .context("Failed to read prompt")?;
-
-        if bytes_read == 0 {
-            println!("\nEOF received. Exiting interactive session.");
+        if stdin.read_line(&mut prompt)? == 0 {
+            println!("\nEOF received. Bye.");
             break;
         }
-
         let prompt = prompt.trim();
         if prompt.is_empty() {
-            println!("Empty prompt detected. Exiting interactive session.");
+            println!("Empty prompt. Exiting.");
             break;
         }
-
-        let max_tokens = 200usize;
-        let temperature = 0.7f64;
-        let top_k = Some(40usize);
-        let top_p = Some(0.95f64);
-
-        let composed_prompt = build_prompt(prompt);
-
-        match generate_single_sample(
-            model,
-            tokenizer,
-            &composed_prompt,
-            max_tokens,
-            temperature,
-            top_k,
-            top_p,
-        ) {
-            Ok(generated_text) => {
-                println!("\n{}\n", "=".repeat(60));
-                println!("{}", generated_text);
-                println!("{}\n", "=".repeat(60));
-            }
-            Err(e) => println!("Failed to generate text: {}", e),
+        let composed = build_prompt(prompt);
+        let prompt_tokens = tokenizer.encode(&composed)?;
+        if prompt_tokens.is_empty() {
+            println!("Prompt could not be encoded.");
+            continue;
         }
+        let prompt_tensor = Tensor::from_vec(prompt_tokens.clone(), (1, prompt_tokens.len()), tokenizer.device())?;
+        let generated = progressive.generate(model, &prompt_tensor, &palette)?;
+        let flat = generated.get(0)?;
+        let indices = flat.to_vec1::<u32>()?;
+        let indices: Vec<u32> = indices;
+        let response = tokenizer.decode(&indices[prompt_tokens.len()..])?;
+        println!("\n{}\n", "=".repeat(60));
+        println!("{}", response);
+        println!("{}\n", "=".repeat(60));
     }
-
     Ok(())
-}
-
-/// Generate a single text sample from a prompt
-fn generate_single_sample(
-    model: &GPTLanguageModel,
-    tokenizer: &CharTokenizer,
-    prompt: &str,
-    max_tokens: usize,
-    temperature: f64,
-    top_k: Option<usize>,
-    top_p: Option<f64>,
-) -> Result<String> {
-    // Encode the prompt
-    let prompt_tokens = tokenizer.encode(prompt);
-
-    if prompt_tokens.is_empty() {
-        return Err(anyhow::anyhow!("Empty prompt tokens"));
-    }
-
-    // Convert to tensor and add batch dimension
-    let prompt_tensor = tokenizer
-        .indices_to_tensor(&prompt_tokens)
-        .context("Failed to convert prompt to tensor")?;
-    let prompt_tensor = prompt_tensor
-        .unsqueeze(0)
-        .context("Failed to add batch dimension")?;
-
-    // Generate tokens
-    let generated_tensor = model
-        .generate_with_sampling(&prompt_tensor, max_tokens, temperature, top_k, top_p)
-        .context("Failed to generate tokens")?;
-
-    // Convert back to text
-    let generated_flat = generated_tensor
-        .get(0)
-        .context("Failed to get generated sequence")?;
-    let generated_indices = generated_flat
-        .to_vec1::<u32>()
-        .context("Failed to convert generated tensor to vector")?;
-
-    let generated_indices: Vec<usize> = generated_indices.iter().map(|&x| x as usize).collect();
-
-    let assistant_start = prompt_tokens.len();
-    if generated_indices.len() > assistant_start {
-        Ok(tokenizer.decode(&generated_indices[assistant_start..]))
-    } else {
-        Ok(String::new())
-    }
 }

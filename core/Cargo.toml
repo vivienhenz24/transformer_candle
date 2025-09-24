@@ -1,0 +1,15 @@
+[package]
+name = "cascade-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+anyhow = "1.0.90"
+fastrand = "2.0"
+utils = { path = "../utils" }
+
+[features]
+default = []
+metal = ["candle-core/metal", "candle-nn/metal"]

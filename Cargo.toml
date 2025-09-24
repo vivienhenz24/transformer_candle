@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "core",
+    "tokenization",
+    "training",
     "utils"
 ]
 
@@ -10,13 +13,13 @@ edition = "2021"
 
 [features]
 default = []
-metal = ["candle-core/metal", "candle-nn/metal"]
+metal = ["candle-core/metal", "candle-nn/metal", "cascade-core/metal"]
 
 [dependencies]
+anyhow = "1.0.90"
+cascade-core = { path = "core" }
+cascade-training = { path = "training" }
+transformer-tokenization = { path = "tokenization" }
 candle-core = "0.9.1"
 candle-nn = "0.9.1"
-candle-datasets = "0.9.1"
-anyhow = "1.0.90"
-tokenizers = "0.20.3"
-fastrand = "2.0"
 utils = { path = "utils" }
