@@ -1,20 +1,15 @@
-pub use cascade_core as core;
-pub use cascade_core::*;
-pub use cascade_training as training;
-pub use transformer_tokenization as tokenization;
-
 use anyhow::Result;
-#[cfg(feature = "metal")]
-use candle_core::DType;
 use candle_core::Device;
+use std::env;
 
 pub fn setup_device() -> Result<Device> {
     println!("Starting device detection...");
 
-    if std::env::var("CANDLE_FORCE_CPU").is_ok() {
+    if env::var("CANDLE_FORCE_CPU").is_ok() {
         println!("CANDLE_FORCE_CPU set, using CPU backend");
         return Ok(Device::Cpu);
     }
+
     #[cfg(feature = "metal")]
     {
         use std::panic::AssertUnwindSafe;
@@ -48,9 +43,9 @@ pub fn setup_device() -> Result<Device> {
 
 pub fn check_available_backends() {
     println!(" System Information:");
-    println!("   OS: {}", std::env::consts::OS);
-    println!("   Architecture: {}", std::env::consts::ARCH);
-    println!("   Family: {}", std::env::consts::FAMILY);
+    println!("   OS: {}", env::consts::OS);
+    println!("   Architecture: {}", env::consts::ARCH);
+    println!("   Family: {}", env::consts::FAMILY);
     #[cfg(target_os = "macos")]
     println!("   Platform: macOS (Metal available)");
 }

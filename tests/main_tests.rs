@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use cascade_core::CascadeTransformerBuilder;
-use transformer::setup_device;
+use cascade_training::setup_device;
 use transformer_tokenization::TokenizerConfig;
 
 #[test]

@@ -7,11 +7,11 @@ A transformer built on Rust/[Candle](https://github.com/huggingface/candle), bec
 ## Workspace Overview
 
 ```
+├── cli/           # `cascade-cli`: binary entrypoint wiring everything together
 ├── core/          # `cascade-core`: model architecture, attention, generation, memory
 ├── tokenization/  # `transformer-tokenization`: adaptive BPE tokenizer pipeline
 ├── training/      # `cascade-training`: single-device trainer, optimisers, schedulers
-├── utils/         # shared utilities (prompt templates)
-└── src/           # binary entrypoint wiring everything together
+└── utils/         # shared utilities (prompt templates)
 ```
 ## Usage
 
@@ -22,7 +22,7 @@ A transformer built on Rust/[Candle](https://github.com/huggingface/candle), bec
 2. Build and run with a preset tuned to your hardware:
 
 ```bash
-cargo run --release --features metal -- --preset=light
+cargo run -p cascade-cli --release --features metal -- --preset=light
 ```
 
 Available presets:
@@ -32,7 +32,7 @@ Available presets:
 - `max` – wider model and longer context; expect higher VRAM demand.
 
 After training finishes, an interactive REPL launches. Generation uses
-progressive refinement with adaptive sampling—edit `src/main.rs` if you'd like
+progressive refinement with adaptive sampling—edit `cli/src/main.rs` if you'd like
 alternative creative modes or sampling defaults. The system prompt template
 remains in `utils/src/prompts.rs`.
 

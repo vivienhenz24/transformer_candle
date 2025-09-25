@@ -12,9 +12,11 @@ pub mod memory_efficient;
 pub mod monitoring;
 pub mod optimizers;
 pub mod regularization;
+pub mod runtime;
 pub mod schedulers;
 
 pub use optimizers::custom_adamw::CustomAdamW;
+pub use runtime::{check_available_backends, setup_device};
 
 #[derive(Debug, Clone)]
 pub struct TrainingConfig {

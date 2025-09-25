@@ -5,16 +5,15 @@ use cascade_core::{
     CascadeTransformer, CascadeTransformerBuilder, CreativeMode, CreativePalette,
     ProgressiveGenerationConfig, ProgressiveRefiner,
 };
-use cascade_training::{train_model, TrainingConfig};
+use cascade_training::{check_available_backends, setup_device, train_model, TrainingConfig};
 use std::{
-    env,
+    env, fs,
     io::{self, Write},
     path::PathBuf,
+    time::Instant,
 };
 use transformer_tokenization::{AdvancedTokenizer, TokenizerConfig};
 use utils::{prompts::build_prompt, wiki::preprocess_wikipedia_dump};
-
-use transformer::{check_available_backends, setup_device};
 
 #[derive(Debug, Clone, Copy)]
 enum TrainingPreset {
@@ -124,6 +123,7 @@ fn main() -> Result<()> {
     if !corpus_path.exists() {
         anyhow::bail!("Data file not found: {}", corpus_path.display());
     }
+    println!("Found dataset at {}", corpus_path.display());
 
     if corpus_path
         .extension()
@@ -139,12 +139,31 @@ fn main() -> Result<()> {
             .parent()
             .map(|p| p.join(cleaned_name))
             .unwrap_or_else(|| PathBuf::from("pt-data/wiki-clean.txt"));
+        println!(
+            "Preparing cleaned corpus ({} -> {})... this may take several minutes.",
+            corpus_path.display(),
+            cleaned_path.display()
+        );
+        let preprocessing_started = Instant::now();
         preprocess_wikipedia_dump(&corpus_path, &cleaned_path)
             .with_context(|| "Failed to preprocess Wikipedia dump")?;
+        println!(
+            "Clean corpus ready after {:.1?} at {}",
+            preprocessing_started.elapsed(),
+            cleaned_path.display()
+        );
         corpus_path = cleaned_path;
+    } else {
+        println!("Using text corpus at {}", corpus_path.display());
+    }
+
+    if let Ok(meta) = fs::metadata(&corpus_path) {
+        let size_mib = meta.len() as f64 / (1024.0 * 1024.0);
+        println!("Corpus size: {:.1} MiB", size_mib);
     }
 
     let tokenizer_cfg = TokenizerConfig::default();
+    println!("Building tokenizer from corpus (may take a while for large datasets)...");
     let tokenizer = AdvancedTokenizer::from_file(&corpus_path, device.clone(), tokenizer_cfg)
         .context("Failed to create tokenizer")?;
     println!("Using corpus: {}", corpus_path.display());
@@ -173,6 +192,7 @@ fn main() -> Result<()> {
         training_config.batch_size, training_config.max_iters, training_config.block_size
     );
 
+    println!("Starting training loop...");
     let stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
         .context("Training failed")?;
     if let Some(last) = stats.last() {
