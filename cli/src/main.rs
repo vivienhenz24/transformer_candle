@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use candle_core::{DType, Tensor};
 use candle_nn::VarMap;
 use cascade_core::{
@@ -6,14 +6,17 @@ use cascade_core::{
     ProgressiveGenerationConfig, ProgressiveRefiner,
 };
 use cascade_training::{check_available_backends, setup_device, train_model, TrainingConfig};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     env, fs,
-    io::{self, Write},
-    path::PathBuf,
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
     time::Instant,
 };
 use transformer_tokenization::{AdvancedTokenizer, TokenizerConfig};
 use utils::{prompts::build_prompt, wiki::preprocess_wikipedia_dump};
+
+const TOKENIZER_DEFAULT_LIMIT_MIB: u64 = 512;
 
 #[derive(Debug, Clone, Copy)]
 enum TrainingPreset {
@@ -164,7 +167,8 @@ fn main() -> Result<()> {
 
     let tokenizer_cfg = TokenizerConfig::default();
     println!("Building tokenizer from corpus (may take a while for large datasets)...");
-    let tokenizer = AdvancedTokenizer::from_file(&corpus_path, device.clone(), tokenizer_cfg)
+    let corpus_text = load_corpus_with_progress(&corpus_path)?;
+    let mut tokenizer = AdvancedTokenizer::from_text(&corpus_text, device.clone(), tokenizer_cfg)
         .context("Failed to create tokenizer")?;
     println!("Using corpus: {}", corpus_path.display());
     println!(
@@ -178,23 +182,55 @@ fn main() -> Result<()> {
     println!("Using preset: {}", preset_label(preset));
 
     let builder = configure_model(preset, tokenizer.vocab_size());
+    let model_config = builder.config().clone();
     let mut varmap = VarMap::new();
     let vb = candle_nn::VarBuilder::from_varmap(&varmap, DType::F32, &device);
-    let model = builder
+    let mut model = builder
         .build(vb)
         .context("Failed to build Cascade Transformer")?;
     println!("Model parameters: ~{}", model.count_parameters());
 
     let mut training_config = configure_training(preset, device.clone());
     training_config.block_size = model.config.block_size;
+    apply_training_overrides(&mut training_config);
     println!(
         "Training configuration: batch={} max_iters={} block={}",
         training_config.batch_size, training_config.max_iters, training_config.block_size
     );
 
     println!("Starting training loop...");
-    let stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
-        .context("Training failed")?;
+    let stats = match train_model(&model, &tokenizer, &mut varmap, &training_config) {
+        Ok(stats) => stats,
+        Err(err) => {
+            if device.is_metal() {
+                println!(
+                    "Metal backend training failed: {}. Falling back to CPU...",
+                    err
+                );
+                let fallback_device = candle_core::Device::Cpu;
+                let mut cpu_config = training_config.clone();
+                cpu_config.device = fallback_device.clone();
+                let cpu_tokenizer = tokenizer.clone().to_device(fallback_device.clone());
+                let mut cpu_varmap = VarMap::new();
+                let cpu_vb =
+                    candle_nn::VarBuilder::from_varmap(&cpu_varmap, DType::F32, &fallback_device);
+                let cpu_model = CascadeTransformer::new(model_config.clone(), cpu_vb)
+                    .context("Failed to rebuild model on CPU")?;
+                println!("Retrying training on CPU...");
+                let cpu_stats =
+                    train_model(&cpu_model, &cpu_tokenizer, &mut cpu_varmap, &cpu_config)
+                        .context("Training failed after Metal fallback")?;
+                model = cpu_model;
+                tokenizer = cpu_tokenizer;
+                println!(
+                    "CPU training complete. Continuing with CPU backend for interactive phase."
+                );
+                cpu_stats
+            } else {
+                return Err(err).context("Training failed")?;
+            }
+        }
+    };
     if let Some(last) = stats.last() {
         println!(
             "Final train loss: {:.4} | val loss: {:.4}",
@@ -204,6 +240,192 @@ fn main() -> Result<()> {
 
     interactive_generation_loop(&model, &tokenizer)?;
     Ok(())
+}
+
+fn load_corpus_with_progress(path: &Path) -> Result<String> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open corpus at {}", path.display()))?;
+    let metadata = file.metadata().ok();
+    let total_bytes = metadata.map(|m| m.len()).unwrap_or(0);
+    let (explicit_limit, explicit_override) = tokenizer_limit_bytes();
+    let mut limit_info = explicit_limit;
+    if !explicit_override {
+        if total_bytes
+            > TOKENIZER_DEFAULT_LIMIT_MIB
+                .saturating_mul(1024)
+                .saturating_mul(1024)
+        {
+            let default_bytes = TOKENIZER_DEFAULT_LIMIT_MIB
+                .saturating_mul(1024)
+                .saturating_mul(1024);
+            limit_info = Some((default_bytes, "default 512 MiB cap"));
+        }
+    }
+    let limit_bytes = limit_info.map(|(bytes, _)| bytes);
+
+    if total_bytes == 0 && limit_bytes.is_none() {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::with_template("{spinner:.green} {msg}")
+                .unwrap()
+                .tick_strings(&["-", "\\", "|", "/"]),
+        );
+        spinner.enable_steady_tick(std::time::Duration::from_millis(120));
+        spinner.set_message("Reading corpus...");
+        let mut reader = io::BufReader::new(file);
+        let mut content = String::new();
+        reader
+            .read_to_string(&mut content)
+            .with_context(|| format!("failed to read corpus at {}", path.display()))?;
+        spinner.finish_with_message("Corpus loaded");
+        return Ok(content);
+    }
+
+    let pb_total = limit_bytes.map_or(total_bytes, |limit| {
+        if total_bytes == 0 {
+            limit
+        } else {
+            limit.min(total_bytes)
+        }
+    });
+    let pb = ProgressBar::new(pb_total.max(1));
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {bytes:>12}/{total_bytes} ({eta})",
+        )
+        .unwrap()
+        .progress_chars("=>-"),
+    );
+    pb.set_message("Loading corpus");
+
+    let mut reader = io::BufReader::with_capacity(2 * 1024 * 1024, file);
+    let capacity = limit_bytes.unwrap_or(total_bytes).min(usize::MAX as u64) as usize;
+    let mut buffer = Vec::with_capacity(capacity);
+    let mut chunk = vec![0u8; 2 * 1024 * 1024];
+    let mut collected = 0u64;
+    loop {
+        let bytes_read = reader
+            .read(&mut chunk)
+            .with_context(|| format!("failed while reading corpus at {}", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        let mut take = bytes_read as u64;
+        if let Some(limit) = limit_bytes {
+            let remaining = limit.saturating_sub(collected);
+            if remaining == 0 {
+                break;
+            }
+            take = take.min(remaining);
+        }
+        buffer.extend_from_slice(&chunk[..take as usize]);
+        collected += take;
+        pb.inc(take);
+        if let Some(limit) = limit_bytes {
+            if collected >= limit {
+                break;
+            }
+        }
+    }
+    pb.finish_with_message(if limit_bytes.is_some() {
+        "Corpus sample loaded"
+    } else {
+        "Corpus loaded"
+    });
+
+    drop(pb);
+
+    if let Some((limit, source)) = limit_info {
+        if total_bytes > limit && total_bytes > 0 {
+            let mib = limit as f64 / (1024.0 * 1024.0);
+            if source.starts_with("default") {
+                println!(
+                    "Tokenizer corpus limited to first {:.1} MiB ({}). Override with TOKENIZER_MAX_BYTES=0 to disable.",
+                    mib, source
+                );
+            } else {
+                println!(
+                    "Tokenizer corpus limited to first {:.1} MiB via {}.",
+                    mib, source
+                );
+            }
+        } else if total_bytes == 0 {
+            let mib = limit as f64 / (1024.0 * 1024.0);
+            println!(
+                "Tokenizer corpus limited to approximately {:.1} MiB via {} (input size unknown).",
+                mib, source
+            );
+        }
+    }
+
+    let valid_len = match std::str::from_utf8(&buffer) {
+        Ok(_) => buffer.len(),
+        Err(err) => {
+            let valid = err.valid_up_to();
+            if valid == 0 {
+                return Err(anyhow!("corpus at {} is not valid UTF-8", path.display()));
+            }
+            valid
+        }
+    };
+    buffer.truncate(valid_len);
+
+    String::from_utf8(buffer)
+        .with_context(|| format!("corpus at {} is not valid UTF-8", path.display()))
+}
+
+fn tokenizer_limit_bytes() -> (Option<(u64, &'static str)>, bool) {
+    if let Ok(value) = env::var("TOKENIZER_MAX_BYTES") {
+        if let Ok(parsed) = value.parse::<u64>() {
+            if parsed == 0 {
+                return (None, true);
+            }
+            return (Some((parsed, "TOKENIZER_MAX_BYTES")), true);
+        }
+    }
+    if let Ok(value) = env::var("TOKENIZER_SAMPLE_MIB") {
+        if let Ok(parsed) = value.parse::<u64>() {
+            if parsed == 0 {
+                return (None, true);
+            }
+            return (
+                Some((
+                    parsed.saturating_mul(1024).saturating_mul(1024),
+                    "TOKENIZER_SAMPLE_MIB",
+                )),
+                true,
+            );
+        }
+    }
+    (None, false)
+}
+
+fn apply_training_overrides(config: &mut TrainingConfig) {
+    if let Ok(value) = env::var("TRAINING_MAX_ITERS") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            config.max_iters = parsed.max(1);
+        }
+    }
+    if let Ok(value) = env::var("TRAINING_EVAL_INTERVAL") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            config.eval_interval = parsed.max(1);
+        }
+    }
+    if let Ok(value) = env::var("TRAINING_EVAL_ITERS") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            config.eval_iters = parsed.max(1);
+        }
+    }
+    if let Ok(value) = env::var("TRAINING_BATCH_SIZE") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            config.batch_size = parsed.max(1);
+        }
+    }
+    if let Ok(value) = env::var("TRAINING_LOG_INTERVAL") {
+        if let Ok(parsed) = value.parse::<usize>() {
+            config.log_interval = parsed.max(1);
+        }
+    }
 }
 
 fn interactive_generation_loop(

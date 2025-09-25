@@ -5,6 +5,7 @@ use candle_nn::{
     VarBuilder, VarMap,
 };
 use cascade_core::{AdaptiveSamplingConfig, CascadeTransformer, CascadeTransformerConfig};
+use std::io::{self, Write};
 use transformer_tokenization::{AdvancedTokenizer, DataSplit};
 use utils::prompts::build_prompt;
 
@@ -48,7 +49,7 @@ impl Default for TrainingConfig {
             beta2: 0.95,
             eps: 1e-8,
             device: candle_core::Device::Cpu,
-            log_interval: 1,
+            log_interval: 50,
         }
     }
 }
@@ -124,6 +125,16 @@ pub fn train_model(
         optimizer.backward_step(&loss)?;
         let loss_value = loss.to_scalar::<f32>()?;
         tokens_processed += config.batch_size * config.block_size;
+
+        if config.log_interval > 0 && (iter + 1) % config.log_interval == 0 {
+            println!(
+                "iter {:5}/{:5} | train_loss {:.4}",
+                iter + 1,
+                config.max_iters,
+                loss_value
+            );
+            let _ = io::stdout().flush();
+        }
 
         if iter % config.eval_interval == 0 || iter == config.max_iters - 1 {
             let train_loss = estimate_loss(model, tokenizer, DataSplit::Train, config)?;

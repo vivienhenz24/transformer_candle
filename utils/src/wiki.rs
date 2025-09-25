@@ -102,8 +102,15 @@ pub fn preprocess_wikipedia_dump<P: AsRef<Path>, Q: AsRef<Path>>(
                         writer.write_all(article.as_bytes())?;
                         writer.write_all(b"\n\n")?;
                         processed_articles += 1;
+                        if processed_articles % 1000 == 0 {
+                            println!("Processed {} articles so far...", processed_articles);
+                        }
                         if let Some(limit) = max_articles {
                             if processed_articles >= limit {
+                                println!(
+                                    "Processed {} articles (limit reached).",
+                                    processed_articles
+                                );
                                 writer.flush()?;
                                 return Ok(());
                             }
@@ -113,6 +120,7 @@ pub fn preprocess_wikipedia_dump<P: AsRef<Path>, Q: AsRef<Path>>(
                 in_page = false;
             }
             Ok(Event::Eof) => {
+                println!("Finished preprocessing {} articles.", processed_articles);
                 writer.flush()?;
                 return Ok(());
             }

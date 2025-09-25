@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use candle_core::{Device, Result as CandleResult, Tensor};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{env, io::Write, path::Path};
 
 pub mod processors;
 pub mod subword;
@@ -48,8 +48,52 @@ impl AdvancedTokenizer {
     pub fn from_text(text: &str, device: Device, config: TokenizerConfig) -> Result<Self> {
         let preprocessor = processors::preprocessing::PreprocessorChain::default();
         let cleaned = preprocessor.run(text);
-        let tokenizer_impl = AdaptiveBpeTokenizer::train_from_text(&cleaned, config.clone())?;
-        let encoding = tokenizer_impl.encode_to_ids(&cleaned);
+        let slice = select_training_slice(&cleaned);
+        if let Some(source) = slice.reason {
+            if slice.truncated {
+                println!(
+                    "Tokenizer: using {} chars ({} truncated) for merge training [{}]",
+                    slice.effective_len,
+                    cleaned.len().saturating_sub(slice.effective_len),
+                    source
+                );
+            } else {
+                println!(
+                    "Tokenizer: corpus chars available for merge training {} [{}]",
+                    slice.effective_len, source
+                );
+            }
+        } else {
+            println!(
+                "Tokenizer: corpus chars available for merge training {}",
+                slice.effective_len
+            );
+        }
+        let tokenizer_impl = AdaptiveBpeTokenizer::train_from_text(slice.text, config.clone())?;
+        println!(
+            "Tokenizer: encoding corpus to token ids ({} chars)...",
+            cleaned.len()
+        );
+        let _ = std::io::stdout().flush();
+        let encode_started = std::time::Instant::now();
+        let mut encoding = tokenizer_impl.encode_to_ids_with_progress(&cleaned, 200_000);
+        println!(
+            "Tokenizer: produced {} tokens in {:.2?}",
+            encoding.len(),
+            encode_started.elapsed()
+        );
+        let _ = std::io::stdout().flush();
+        if let Some((limit, reason)) = tokenizer_token_limit() {
+            if encoding.len() > limit {
+                println!(
+                    "Tokenizer: truncating tokens from {} to {} ({}).",
+                    encoding.len(),
+                    limit,
+                    reason
+                );
+                encoding.truncate(limit);
+            }
+        }
         let split_idx =
             ((encoding.len() as f32) * (1.0 - config.validation_fraction)).max(1.0) as usize;
         let split_idx = split_idx.min(encoding.len().saturating_sub(1));
@@ -137,4 +181,60 @@ impl AdvancedTokenizer {
         self.device = device;
         self
     }
+}
+
+struct TrainingSlice<'a> {
+    text: &'a str,
+    truncated: bool,
+    effective_len: usize,
+    reason: Option<&'static str>,
+}
+
+fn select_training_slice(text: &str) -> TrainingSlice {
+    if let Some(limit) = parse_env_limit("TOKENIZER_CHAR_LIMIT") {
+        if limit == 0 {
+            return TrainingSlice {
+                text,
+                truncated: false,
+                effective_len: text.len(),
+                reason: Some("TOKENIZER_CHAR_LIMIT (no cap)"),
+            };
+        }
+        let capped = limit.min(text.len());
+        return TrainingSlice {
+            text: &text[..capped],
+            truncated: capped < text.len(),
+            effective_len: capped,
+            reason: Some("TOKENIZER_CHAR_LIMIT"),
+        };
+    }
+
+    let default_limit: usize = 2_000_000; // ~2 MB of text
+    let capped = default_limit.min(text.len());
+    TrainingSlice {
+        text: &text[..capped],
+        truncated: capped < text.len(),
+        effective_len: capped,
+        reason: if capped < text.len() {
+            Some("default 2M char cap")
+        } else {
+            None
+        },
+    }
+}
+
+fn parse_env_limit(key: &str) -> Option<usize> {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
+fn tokenizer_token_limit() -> Option<(usize, &'static str)> {
+    if let Some(limit) = parse_env_limit("TOKENIZER_MAX_TOKENS") {
+        if limit == 0 {
+            return None;
+        }
+        return Some((limit, "TOKENIZER_MAX_TOKENS"));
+    }
+    Some((1_000_000, "default 1M token cap"))
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,11 @@ pub struct AdaptiveBpeTokenizer {
 impl AdaptiveBpeTokenizer {
     pub fn train_from_text(text: &str, tokenizer_config: TokenizerConfig) -> Result<Self> {
         let mut config: AdaptiveBpeConfig = tokenizer_config.clone().into();
+        println!(
+            "Tokenizer training: preparing character vocabulary from {} chars",
+            text.len()
+        );
+        let _ = io::stdout().flush();
         let tokens: Vec<String> = text.chars().map(|c| c.to_string()).collect();
         let mut working = tokens.clone();
 
@@ -40,11 +46,20 @@ impl AdaptiveBpeTokenizer {
         }
 
         // Heuristic: limit merge count for very large corpora to keep training tractable.
-        if working.len() > 200_000 {
+        if working.len() > 1_000_000 {
+            config.max_merges = config.max_merges.min(128);
+        } else if working.len() > 200_000 {
             config.max_merges = config.max_merges.min(256);
         } else if working.len() > 100_000 {
             config.max_merges = config.max_merges.min(512);
         }
+        println!(
+            "Tokenizer training: initial symbols {} | max merges {} | target vocab {}",
+            working.len(),
+            config.max_merges,
+            config.vocab_size
+        );
+        let _ = io::stdout().flush();
 
         let mut vocab: HashSet<String> = working.iter().cloned().collect();
         let mut merges = Vec::new();
@@ -70,6 +85,7 @@ impl AdaptiveBpeTokenizer {
                     "Tokenizer training: performed {} merges (target vocab: {})",
                     merges_added, config.vocab_size
                 );
+                let _ = io::stdout().flush();
             }
         }
 
@@ -121,6 +137,30 @@ impl AdaptiveBpeTokenizer {
                     .unwrap_or_else(|| self.token_to_id[&self.unk_token])
             })
             .collect()
+    }
+
+    pub fn encode_to_ids_with_progress(&self, text: &str, chunk: usize) -> Vec<u32> {
+        if chunk == 0 {
+            return self.encode_to_ids(text);
+        }
+        let total = text.len();
+        let mut tokens = Vec::with_capacity(total);
+        let mut start = 0;
+        while start < total {
+            let end = (start + chunk).min(total);
+            let slice = &text[start..end];
+            let ids = self.encode_to_ids(slice);
+            tokens.extend_from_slice(&ids);
+            println!(
+                "Tokenizer: encoded {}/{} chars into {} tokens",
+                end,
+                total,
+                tokens.len()
+            );
+            let _ = io::stdout().flush();
+            start = end;
+        }
+        tokens
     }
 
     pub fn decode_ids(&self, ids: &[u32]) -> String {

@@ -11,6 +11,7 @@ cascade-core = { path = "../core" }
 cascade-training = { path = "../training" }
 transformer-tokenization = { path = "../tokenization" }
 utils = { path = "../utils" }
+indicatif = "0.17"
 
 [features]
 default = []

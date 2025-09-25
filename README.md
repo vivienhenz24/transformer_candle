@@ -36,6 +36,24 @@ progressive refinement with adaptive sampling—edit `cli/src/main.rs` if you'd 
 alternative creative modes or sampling defaults. The system prompt template
 remains in `utils/src/prompts.rs`.
 
+> **Speed tip:** the Wikipedia dump is massive. The CLI samples at most ~512 MiB
+> of text by default—set `WIKI_MAX_ARTICLES` before preprocessing or tweak
+> `TOKENIZER_SAMPLE_MIB`/`TOKENIZER_MAX_BYTES` (use `TOKENIZER_MAX_BYTES=0` to
+> disable the cap) when running the CLI to control how much text feeds the
+> tokenizer. `TOKENIZER_CHAR_LIMIT` (default ~2M chars) bounds how much text is
+> used for learning merges so tokenizer training stays snappy, and
+> `TOKENIZER_MAX_TOKENS` (default 1M) caps how many token IDs get cached for
+> training/validation.
+
+Fine-tune the trainer without touching code via environment variables, e.g.:
+
+```bash
+TRAINING_MAX_ITERS=200 \
+TRAINING_LOG_INTERVAL=10 \
+TOKENIZER_SAMPLE_MIB=32 \
+cargo run -p cascade-cli --bin cascade-cli --release -- --preset=light
+```
+
 > **Metal note:** Candle’s Metal backend is still evolving. On start-up the
 > binary runs a small preflight check; if the GPU kernels misbehave the program
 > automatically falls back to CPU to keep training reliable. Set
