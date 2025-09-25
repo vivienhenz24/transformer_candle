@@ -15,7 +15,7 @@ impl From<TokenizerConfig> for AdaptiveBpeConfig {
     fn from(value: TokenizerConfig) -> Self {
         Self {
             vocab_size: value.vocab_size,
-            max_merges: value.vocab_size.saturating_sub(256),
+            max_merges: value.vocab_size.saturating_sub(256).max(64),
         }
     }
 }
@@ -31,9 +31,20 @@ pub struct AdaptiveBpeTokenizer {
 
 impl AdaptiveBpeTokenizer {
     pub fn train_from_text(text: &str, tokenizer_config: TokenizerConfig) -> Result<Self> {
-        let config: AdaptiveBpeConfig = tokenizer_config.clone().into();
+        let mut config: AdaptiveBpeConfig = tokenizer_config.clone().into();
         let tokens: Vec<String> = text.chars().map(|c| c.to_string()).collect();
         let mut working = tokens.clone();
+
+        if working.is_empty() {
+            working.push(tokenizer_config.unk_token.clone());
+        }
+
+        // Heuristic: limit merge count for very large corpora to keep training tractable.
+        if working.len() > 200_000 {
+            config.max_merges = config.max_merges.min(256);
+        } else if working.len() > 100_000 {
+            config.max_merges = config.max_merges.min(512);
+        }
 
         let mut vocab: HashSet<String> = working.iter().cloned().collect();
         let mut merges = Vec::new();
@@ -44,10 +55,7 @@ impl AdaptiveBpeTokenizer {
             if counts.is_empty() {
                 break;
             }
-            let (best_pair, _) = counts
-                .into_iter()
-                .max_by(|a, b| a.1.cmp(&b.1))
-                .unwrap();
+            let (best_pair, _) = counts.into_iter().max_by(|a, b| a.1.cmp(&b.1)).unwrap();
             let new_token = format!("{}{}", best_pair.0, best_pair.1);
             if vocab.contains(&new_token) {
                 break;
@@ -56,6 +64,13 @@ impl AdaptiveBpeTokenizer {
             vocab.insert(new_token.clone());
             merges.push((best_pair.0, best_pair.1, new_token));
             merges_added += 1;
+
+            if merges_added % 128 == 0 {
+                println!(
+                    "Tokenizer training: performed {} merges (target vocab: {})",
+                    merges_added, config.vocab_size
+                );
+            }
         }
 
         let mut id_to_token = Vec::new();
@@ -97,10 +112,14 @@ impl AdaptiveBpeTokenizer {
     }
 
     pub fn encode_to_ids(&self, text: &str) -> Vec<u32> {
-        self
-            .encode_tokens(text)
+        self.encode_tokens(text)
             .into_iter()
-            .map(|token| self.token_to_id.get(&token).cloned().unwrap_or_else(|| self.token_to_id[&self.unk_token]))
+            .map(|token| {
+                self.token_to_id
+                    .get(&token)
+                    .cloned()
+                    .unwrap_or_else(|| self.token_to_id[&self.unk_token])
+            })
             .collect()
     }
 

@@ -35,7 +35,11 @@ impl CascadeEmbeddings {
         let token = candle_nn::embedding(config.vocab_size, config.n_embd, vb.pp("wte"))?;
         let position = candle_nn::embedding(config.block_size, config.n_embd, vb.pp("wpe"))?;
         let freq = if config.learned_frequency {
-            Some(candle_nn::embedding(config.block_size, config.n_embd, vb.pp("wfe"))?)
+            Some(candle_nn::embedding(
+                config.block_size,
+                config.n_embd,
+                vb.pp("wfe"),
+            )?)
         } else {
             None
         };
@@ -74,6 +78,11 @@ impl CascadeEmbeddings {
     pub fn forward(&self, idx: &Tensor) -> CandleResult<Tensor> {
         let tokens = self.token.forward(idx)?;
         let (_, seq_len) = idx.dims2()?;
+        if seq_len == 0 {
+            return Err(candle_core::Error::Msg(
+                "embedding received zero-length sequence".into(),
+            ));
+        }
         let pos_idx = Tensor::arange(0u32, seq_len as u32, idx.device())?;
         let pos_emb = self.position.forward(&pos_idx)?;
         let pos_emb = pos_emb.unsqueeze(0)?.broadcast_as(tokens.shape())?;

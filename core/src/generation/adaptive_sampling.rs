@@ -50,7 +50,8 @@ impl AdaptiveSampler {
         }
         entropy /= count as f64;
         let scaled = (entropy / 5.0).clamp(0.0, 1.0);
-        self.config.min_temperature + (self.config.base_temperature - self.config.min_temperature) * scaled
+        self.config.min_temperature
+            + (self.config.base_temperature - self.config.min_temperature) * scaled
     }
 
     pub fn sample_next_token(&self, logits: &Tensor) -> CandleResult<Tensor> {
@@ -59,7 +60,8 @@ impl AdaptiveSampler {
         let temperature = self.adaptive_temperature(&probs_vec);
         let mut sampled = Vec::with_capacity(probs_vec.len());
         for row in probs_vec.iter() {
-            let idx = sample_from_distribution(row, temperature, self.config.top_k, self.config.top_p);
+            let idx =
+                sample_from_distribution(row, temperature, self.config.top_k, self.config.top_p);
             sampled.push(idx as u32);
         }
         Tensor::from_vec(sampled, (probs_vec.len(), 1), logits.device())
@@ -80,7 +82,11 @@ fn sample_from_distribution(
         return 0;
     }
 
-    let inv_temp = if temperature <= 0.0 { 1.0 } else { (1.0 / temperature).max(1e-4) } as f32;
+    let inv_temp = if temperature <= 0.0 {
+        1.0
+    } else {
+        (1.0 / temperature).max(1e-4)
+    } as f32;
     let mut adjusted: Vec<f32> = logits.iter().map(|&logit| logit * inv_temp).collect();
 
     if let Some(mut k) = top_k {
@@ -89,7 +95,11 @@ fn sample_from_distribution(
         }
         if k < adjusted.len() {
             let mut indices: Vec<usize> = (0..adjusted.len()).collect();
-            indices.sort_unstable_by(|a, b| adjusted[*b].partial_cmp(&adjusted[*a]).unwrap_or(std::cmp::Ordering::Equal));
+            indices.sort_unstable_by(|a, b| {
+                adjusted[*b]
+                    .partial_cmp(&adjusted[*a])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             for &idx in indices.iter().skip(k) {
                 adjusted[idx] = f32::NEG_INFINITY;
             }

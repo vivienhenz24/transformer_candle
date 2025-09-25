@@ -15,7 +15,10 @@ A transformer built on Rust/[Candle](https://github.com/huggingface/candle), bec
 ```
 ## Usage
 
-1. Place your training corpus at `pt-data/input.txt` (a Shakespeare sample is bundled).
+1. Download the compressed dump `enwiki-latest-pages-articles-multistream.xml.bz2` into `pt-data/`.
+   The binary will stream the archive, clean the markup, and cache a
+   `*-clean.txt` file automatically (override with `WIKI_MAX_ARTICLES` to limit
+   preprocessing).
 2. Build and run with a preset tuned to your hardware:
 
 ```bash
@@ -32,6 +35,11 @@ After training finishes, an interactive REPL launches. Generation uses
 progressive refinement with adaptive sampling—edit `src/main.rs` if you'd like
 alternative creative modes or sampling defaults. The system prompt template
 remains in `utils/src/prompts.rs`.
+
+> **Metal note:** Candle’s Metal backend is still evolving. On start-up the
+> binary runs a small preflight check; if the GPU kernels misbehave the program
+> automatically falls back to CPU to keep training reliable. Set
+> `CANDLE_FORCE_CPU=1` to skip Metal detection entirely.
 
 ## Tests
 

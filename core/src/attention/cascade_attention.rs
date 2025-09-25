@@ -50,10 +50,15 @@ pub struct CascadeAttentionComposer {
 
 impl CascadeAttentionComposer {
     pub fn new(config: CascadeAttentionConfig, vb: VarBuilder) -> CandleResult<Self> {
-        let adaptive = AdaptiveWindowAttention::new(config.attention, config.window, vb.pp("adaptive"))?;
+        let adaptive =
+            AdaptiveWindowAttention::new(config.attention, config.window, vb.pp("adaptive"))?;
         let hierarchical = HierarchicalAttention::new(config.attention, vb.pp("hierarchical"))?;
         let residual = MultiHeadSelfAttention::new(config.attention, vb.pp("residual"))?;
-        let fusion = candle_nn::linear(config.attention.n_embd * 3, config.attention.n_embd, vb.pp("fusion"))?;
+        let fusion = candle_nn::linear(
+            config.attention.n_embd * 3,
+            config.attention.n_embd,
+            vb.pp("fusion"),
+        )?;
         let dropout = candle_nn::Dropout::new(config.fusion_dropout);
         let sparse_mask = config.sparse.map(SparseAttentionMask::new);
 
@@ -88,7 +93,10 @@ impl CascadeAttentionComposer {
         let hierarchical = self.hierarchical.forward(x, mask.as_ref(), train)?;
         let residual = self.residual.forward(x, mask.as_ref(), train)?;
 
-        let fused = Tensor::cat(&[adaptive.clone(), hierarchical.clone(), residual.clone()], 2)?;
+        let fused = Tensor::cat(
+            &[adaptive.clone(), hierarchical.clone(), residual.clone()],
+            2,
+        )?;
         let mut fused = self.fusion.forward(&fused)?;
         fused = if train {
             self.dropout.forward(&fused, train)?
@@ -118,7 +126,13 @@ impl CascadeAttentionComposer {
             Some(adaptive.clone())
         };
 
-        Ok((merged, CrossLayerState { global_context, residual_attn }))
+        Ok((
+            merged,
+            CrossLayerState {
+                global_context,
+                residual_attn,
+            },
+        ))
     }
 
     pub fn adaptive(&self) -> &AdaptiveWindowAttention {

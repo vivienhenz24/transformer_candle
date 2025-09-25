@@ -31,7 +31,10 @@ impl TokenDepthUsage {
     }
 
     pub fn layer_budget_met(&self) -> Vec<bool> {
-        self.counters.iter().map(|&c| c >= self.max_layers).collect()
+        self.counters
+            .iter()
+            .map(|&c| c >= self.max_layers)
+            .collect()
     }
 
     pub fn seq_len(&self) -> usize {
@@ -103,7 +106,11 @@ impl AdaptiveDepthController {
         let (_, seq_len, _) = activations.dims3()?;
         let min_layers = self.config.min_layers.min(self.config.max_layers);
         if layer_idx < min_layers {
-            let mask = Tensor::ones((activations.dim(0)?, seq_len, 1), activations.dtype(), activations.device())?;
+            let mask = Tensor::ones(
+                (activations.dim(0)?, seq_len, 1),
+                activations.dtype(),
+                activations.device(),
+            )?;
             let flags = vec![true; usage.counters.len()];
             return Ok((mask, flags));
         }
@@ -126,7 +133,11 @@ impl AdaptiveDepthController {
             mask_tensor.push(if *flag { 1.0f32 } else { 0.0 });
         }
 
-        let mask = Tensor::from_vec(mask_tensor, (activations.dim(0)?, seq_len, 1), activations.device())?;
+        let mask = Tensor::from_vec(
+            mask_tensor,
+            (activations.dim(0)?, seq_len, 1),
+            activations.device(),
+        )?;
         Ok((mask, active_flags))
     }
 }

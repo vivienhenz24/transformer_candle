@@ -20,10 +20,16 @@ pub struct StreamingState {
 impl StreamingState {
     pub fn update(&mut self, seq_len: usize, block_size: usize) {
         if seq_len <= block_size {
-            self.window = Some(StreamWindow { start: 0, end: seq_len });
+            self.window = Some(StreamWindow {
+                start: 0,
+                end: seq_len,
+            });
         } else {
             let start = seq_len - block_size;
-            self.window = Some(StreamWindow { start, end: seq_len });
+            self.window = Some(StreamWindow {
+                start,
+                end: seq_len,
+            });
         }
     }
 

@@ -43,8 +43,10 @@ impl ProgressiveRefiner {
 
         for pass in 0..self.config.passes.max(1) {
             let decay = self.config.refinement_decay.powi(pass as i32);
-            sampling.base_temperature = (sampling.base_temperature * decay as f64).max(sampling.min_temperature);
-            sampling.max_tokens = ((sampler.config().max_tokens as f32) * decay).max(sampling.min_tokens as f32) as usize;
+            sampling.base_temperature =
+                (sampling.base_temperature * decay as f64).max(sampling.min_temperature);
+            sampling.max_tokens = ((sampler.config().max_tokens as f32) * decay)
+                .max(sampling.min_tokens as f32) as usize;
             sampler = AdaptiveSampler::new(sampling.clone());
             output = model.generate_with_sampler(&output, &sampler, sampling.max_tokens)?;
         }

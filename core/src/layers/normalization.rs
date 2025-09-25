@@ -22,7 +22,12 @@ pub struct CascadeNorm {
 }
 
 impl CascadeNorm {
-    pub fn new(n_embd: usize, eps: f64, strategy: NormStrategy, vb: VarBuilder) -> CandleResult<Self> {
+    pub fn new(
+        n_embd: usize,
+        eps: f64,
+        strategy: NormStrategy,
+        vb: VarBuilder,
+    ) -> CandleResult<Self> {
         let layer = candle_nn::layer_norm(n_embd, eps, vb.pp("ln"))?;
         let rms = if let NormStrategy::Rms = strategy {
             Some(candle_nn::rms_norm(n_embd, eps, vb.pp("rms"))?)
@@ -30,7 +35,11 @@ impl CascadeNorm {
             None
         };
 
-        Ok(Self { layer, rms, strategy })
+        Ok(Self {
+            layer,
+            rms,
+            strategy,
+        })
     }
 
     pub fn forward(&self, x: &Tensor) -> CandleResult<Tensor> {

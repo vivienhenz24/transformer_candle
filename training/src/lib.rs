@@ -1,6 +1,9 @@
 use anyhow::Result;
 use candle_core::Tensor;
-use candle_nn::{optim::{AdamW, Optimizer, ParamsAdamW}, VarBuilder, VarMap};
+use candle_nn::{
+    optim::{AdamW, Optimizer, ParamsAdamW},
+    VarBuilder, VarMap,
+};
 use cascade_core::{AdaptiveSamplingConfig, CascadeTransformer, CascadeTransformerConfig};
 use transformer_tokenization::{AdvancedTokenizer, DataSplit};
 use utils::prompts::build_prompt;
@@ -57,7 +60,10 @@ pub struct TrainingStats {
     pub elapsed_time: f32,
 }
 
-pub fn create_model(config: CascadeTransformerConfig, vb: VarBuilder) -> candle_core::Result<CascadeTransformer> {
+pub fn create_model(
+    config: CascadeTransformerConfig,
+    vb: VarBuilder,
+) -> candle_core::Result<CascadeTransformer> {
     CascadeTransformer::new(config, vb)
 }
 
@@ -78,7 +84,9 @@ pub fn estimate_loss(
         }
     }
     if count == 0 {
-        Err(candle_core::Error::Msg("no batches for loss estimate".into()))
+        Err(candle_core::Error::Msg(
+            "no batches for loss estimate".into(),
+        ))
     } else {
         Ok(total / count as f32)
     }
@@ -107,7 +115,8 @@ pub fn train_model(
     let mut tokens_processed = 0usize;
 
     for iter in 0..config.max_iters {
-        let (inputs, targets) = tokenizer.get_batch(DataSplit::Train, config.batch_size, config.block_size)?;
+        let (inputs, targets) =
+            tokenizer.get_batch(DataSplit::Train, config.batch_size, config.block_size)?;
         let (_logits, loss) = model.forward(&inputs, Some(&targets), true)?;
         let loss = loss.ok_or_else(|| candle_core::Error::Msg("no loss".into()))?;
         optimizer.backward_step(&loss)?;
@@ -162,7 +171,11 @@ fn generate_preview(model: &CascadeTransformer, tokenizer: &AdvancedTokenizer) -
     if prompt_tokens.is_empty() {
         return Ok(String::new());
     }
-    let prompt_tensor = Tensor::from_vec(prompt_tokens.clone(), (1, prompt_tokens.len()), tokenizer.device())?;
+    let prompt_tensor = Tensor::from_vec(
+        prompt_tokens.clone(),
+        (1, prompt_tokens.len()),
+        tokenizer.device(),
+    )?;
     let generated = model.generate(&prompt_tensor, AdaptiveSamplingConfig::default())?;
     let flat = generated.get(0)?;
     let indices = flat.to_vec1::<u32>()?;

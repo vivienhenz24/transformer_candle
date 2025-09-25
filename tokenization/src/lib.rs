@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use candle_core::{Device, Result as CandleResult, Tensor};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 pub mod processors;
 pub mod subword;
@@ -49,7 +50,8 @@ impl AdvancedTokenizer {
         let cleaned = preprocessor.run(text);
         let tokenizer_impl = AdaptiveBpeTokenizer::train_from_text(&cleaned, config.clone())?;
         let encoding = tokenizer_impl.encode_to_ids(&cleaned);
-        let split_idx = ((encoding.len() as f32) * (1.0 - config.validation_fraction)).max(1.0) as usize;
+        let split_idx =
+            ((encoding.len() as f32) * (1.0 - config.validation_fraction)).max(1.0) as usize;
         let split_idx = split_idx.min(encoding.len().saturating_sub(1));
         let train_data = encoding[..split_idx].to_vec();
         let val_data = encoding[split_idx..].to_vec();
@@ -62,8 +64,14 @@ impl AdvancedTokenizer {
         })
     }
 
-    pub fn from_file(path: &str, device: Device, config: TokenizerConfig) -> Result<Self> {
-        let text = std::fs::read_to_string(path).context("failed to read corpus")?;
+    pub fn from_file<P: AsRef<Path>>(
+        path: P,
+        device: Device,
+        config: TokenizerConfig,
+    ) -> Result<Self> {
+        let path_ref = path.as_ref();
+        let text = std::fs::read_to_string(path_ref)
+            .with_context(|| format!("failed to read corpus at {}", path_ref.display()))?;
         Self::from_text(&text, device, config)
     }
 
@@ -90,10 +98,17 @@ impl AdvancedTokenizer {
         self.val_data.len()
     }
 
-    pub fn get_batch(&self, split: DataSplit, batch_size: usize, block_size: usize) -> CandleResult<(Tensor, Tensor)> {
+    pub fn get_batch(
+        &self,
+        split: DataSplit,
+        batch_size: usize,
+        block_size: usize,
+    ) -> CandleResult<(Tensor, Tensor)> {
         let data = self.split_data(split);
         if data.len() <= block_size {
-            return Err(candle_core::Error::Msg("data length must exceed block size".into()));
+            return Err(candle_core::Error::Msg(
+                "data length must exceed block size".into(),
+            ));
         }
         let max_start = data.len() - block_size - 1;
         let mut inputs = Vec::new();
@@ -103,8 +118,10 @@ impl AdvancedTokenizer {
             inputs.extend_from_slice(&data[start..start + block_size]);
             targets.extend_from_slice(&data[start + 1..start + block_size + 1]);
         }
-        let inputs = Tensor::from_vec(inputs, (batch_size, block_size), &self.device)?;
-        let targets = Tensor::from_vec(targets, (batch_size, block_size), &self.device)?;
+        let inputs = Tensor::from_vec(inputs, (batch_size, block_size), &Device::Cpu)?
+            .to_device(&self.device)?;
+        let targets = Tensor::from_vec(targets, (batch_size, block_size), &Device::Cpu)?
+            .to_device(&self.device)?;
         Ok((inputs, targets))
     }
 

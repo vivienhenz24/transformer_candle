@@ -28,7 +28,9 @@ impl ActivationStrategy {
                 relu.mul(&relu)
             }
             ActivationStrategy::GatedSilu => {
-                let gate = gate.ok_or_else(|| candle_core::Error::Msg("GatedSilu requires gate tensor".into()))?;
+                let gate = gate.ok_or_else(|| {
+                    candle_core::Error::Msg("GatedSilu requires gate tensor".into())
+                })?;
                 x.silu()?.mul(gate)
             }
         }

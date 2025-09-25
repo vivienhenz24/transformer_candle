@@ -28,7 +28,9 @@ impl HierarchicalAttention {
     pub fn forward(&self, x: &Tensor, mask: Option<&Tensor>, train: bool) -> CandleResult<Tensor> {
         let local = self.local.forward(x, mask, train)?;
         let summary = self.global_summary(x)?;
-        let blended = self.global_mixer.forward(&summary.broadcast_as(local.shape())?)?;
+        let blended = self
+            .global_mixer
+            .forward(&summary.broadcast_as(local.shape())?)?;
         let gate_raw = self.gate.forward(&local)?;
         let gate = candle_nn::ops::sigmoid(&gate_raw)?;
         let inverse_gate = gate.affine(-1.0, 1.0)?;

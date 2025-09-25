@@ -26,7 +26,11 @@ pub struct AdaptiveWindowAttention {
 }
 
 impl AdaptiveWindowAttention {
-    pub fn new(attn_config: AttentionConfig, window_config: AdaptiveWindowConfig, vb: candle_nn::VarBuilder) -> CandleResult<Self> {
+    pub fn new(
+        attn_config: AttentionConfig,
+        window_config: AdaptiveWindowConfig,
+        vb: candle_nn::VarBuilder,
+    ) -> CandleResult<Self> {
         Ok(Self {
             base: MultiHeadSelfAttention::new(attn_config, vb)?,
             config: window_config,
@@ -45,14 +49,22 @@ impl AdaptiveWindowAttention {
         let mean = diffs.mean_all()?.to_scalar::<f32>().unwrap_or(0.0);
         let scaled = (mean * self.config.responsiveness).tanh();
         let window = self.config.min_window as f32
-            + (self.config.max_window.saturating_sub(self.config.min_window) as f32)
+            + (self
+                .config
+                .max_window
+                .saturating_sub(self.config.min_window) as f32)
                 * (0.5 * (scaled + 1.0));
         let window = window.round() as usize;
         let window = window.clamp(self.config.min_window, self.config.max_window);
         Ok(window.min(seq_len).max(1))
     }
 
-    fn build_window_mask(&self, device: &Device, seq_len: usize, window: usize) -> CandleResult<Tensor> {
+    fn build_window_mask(
+        &self,
+        device: &Device,
+        seq_len: usize,
+        window: usize,
+    ) -> CandleResult<Tensor> {
         let mut data = vec![-1e9f32; seq_len * seq_len];
         for i in 0..seq_len {
             let start = i.saturating_sub(window - 1);

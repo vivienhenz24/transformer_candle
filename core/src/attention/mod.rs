@@ -71,6 +71,11 @@ impl AttentionHead {
 
     pub fn forward(&self, x: &Tensor, mask: Option<&Tensor>, train: bool) -> CandleResult<Tensor> {
         let (_batch, seq_len, _n_embd) = x.dims3()?;
+        if seq_len == 0 {
+            return Err(candle_core::Error::Msg(
+                "attention received zero-length sequence".into(),
+            ));
+        }
 
         let queries = self.query.forward(x)?;
         let keys = self.key.forward(x)?;
@@ -109,7 +114,11 @@ pub struct MultiHeadSelfAttention {
 
 impl MultiHeadSelfAttention {
     pub fn new(config: AttentionConfig, vb: VarBuilder) -> CandleResult<Self> {
-        assert_eq!(config.n_embd % config.n_head, 0, "n_embd must be divisible by n_head");
+        assert_eq!(
+            config.n_embd % config.n_head,
+            0,
+            "n_embd must be divisible by n_head"
+        );
 
         let mut heads = Vec::with_capacity(config.n_head);
         for idx in 0..config.n_head {
@@ -120,7 +129,11 @@ impl MultiHeadSelfAttention {
         let proj = candle_nn::linear(config.n_embd, config.n_embd, vb.pp("proj"))?;
         let dropout = Dropout::new(config.dropout);
 
-        Ok(Self { heads, proj, dropout })
+        Ok(Self {
+            heads,
+            proj,
+            dropout,
+        })
     }
 
     pub fn forward(&self, x: &Tensor, mask: Option<&Tensor>, train: bool) -> CandleResult<Tensor> {
@@ -162,7 +175,11 @@ impl ResidualAttention {
     }
 }
 
-pub fn build_attention_mask(pattern: Option<&SparseAttentionMask>, device: &Device, seq_len: usize) -> CandleResult<Option<Tensor>> {
+pub fn build_attention_mask(
+    pattern: Option<&SparseAttentionMask>,
+    device: &Device,
+    seq_len: usize,
+) -> CandleResult<Option<Tensor>> {
     if let Some(pattern) = pattern {
         pattern.as_tensor(device, seq_len).map(Some)
     } else {
@@ -170,7 +187,11 @@ pub fn build_attention_mask(pattern: Option<&SparseAttentionMask>, device: &Devi
     }
 }
 
-pub fn blend_attention_outputs(primary: &Tensor, secondary: &Tensor, alpha: f32) -> CandleResult<Tensor> {
+pub fn blend_attention_outputs(
+    primary: &Tensor,
+    secondary: &Tensor,
+    alpha: f32,
+) -> CandleResult<Tensor> {
     let alpha = alpha.clamp(0.0, 1.0) as f64;
     let primary_scaled = primary.affine(alpha, 0.0)?;
     let secondary_scaled = secondary.affine(1.0 - alpha, 0.0)?;

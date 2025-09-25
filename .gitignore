@@ -8,6 +8,7 @@ Cargo.lock
 *.swp
 *.swo
 checkpoints/
+pt-data/
 
 # OS
 .DS_Store

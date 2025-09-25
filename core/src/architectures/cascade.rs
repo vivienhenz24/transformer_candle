@@ -1,8 +1,12 @@
 use candle_core::{Result as CandleResult, Tensor};
 use candle_nn::{loss, Linear, Module, VarBuilder};
 
-use crate::attention::cascade_attention::{CascadeAttentionComposer, CascadeAttentionConfig, CrossLayerState};
-use crate::architectures::adaptive_depth::{AdaptiveDepthConfig, AdaptiveDepthController, TokenDepthUsage};
+use crate::architectures::adaptive_depth::{
+    AdaptiveDepthConfig, AdaptiveDepthController, TokenDepthUsage,
+};
+use crate::attention::cascade_attention::{
+    CascadeAttentionComposer, CascadeAttentionConfig, CrossLayerState,
+};
 use crate::generation::adaptive_sampling::{AdaptiveSampler, AdaptiveSamplingConfig};
 use crate::layers::activation::ActivationRegistry;
 use crate::layers::embedding::{CascadeEmbeddingConfig, CascadeEmbeddings};
@@ -64,7 +68,8 @@ pub struct CascadeBlock {
 
 impl CascadeBlock {
     pub fn new(config: &CascadeTransformerConfig, vb: VarBuilder) -> CandleResult<Self> {
-        let attn_norm = CascadeNorm::new(config.n_embd, 1e-5, NormStrategy::Layer, vb.pp("ln_attn"))?;
+        let attn_norm =
+            CascadeNorm::new(config.n_embd, 1e-5, NormStrategy::Layer, vb.pp("ln_attn"))?;
         let mut attention_cfg = config.attention.clone();
         attention_cfg.attention.n_embd = config.n_embd;
         attention_cfg.attention.n_head = config.n_head;
@@ -161,7 +166,14 @@ impl CascadeTransformer {
         let mut shared_state: Option<CrossLayerState> = None;
 
         for (layer_idx, block) in self.blocks.iter().enumerate() {
-            let (next, state) = block.forward(&x, train, layer_idx, &mut depth, &mut usage, shared_state.as_ref())?;
+            let (next, state) = block.forward(
+                &x,
+                train,
+                layer_idx,
+                &mut depth,
+                &mut usage,
+                shared_state.as_ref(),
+            )?;
             x = next;
             shared_state = Some(state);
         }
@@ -202,7 +214,11 @@ impl CascadeTransformer {
         Ok(current)
     }
 
-    pub fn generate(&self, context: &Tensor, config: AdaptiveSamplingConfig) -> CandleResult<Tensor> {
+    pub fn generate(
+        &self,
+        context: &Tensor,
+        config: AdaptiveSamplingConfig,
+    ) -> CandleResult<Tensor> {
         let sampler = AdaptiveSampler::new(config.clone());
         let max_tokens = config.max_tokens.max(config.min_tokens);
         self.generate_with_sampler(context, &sampler, max_tokens)

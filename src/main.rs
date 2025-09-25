@@ -1,22 +1,18 @@
 use anyhow::{Context, Result};
-use cascade_core::{
-    CascadeTransformer,
-    CascadeTransformerBuilder,
-    CreativeMode,
-    CreativePalette,
-    ProgressiveGenerationConfig,
-    ProgressiveRefiner,
-};
-use cascade_training::{train_model, TrainingConfig};
 use candle_core::{DType, Tensor};
 use candle_nn::VarMap;
+use cascade_core::{
+    CascadeTransformer, CascadeTransformerBuilder, CreativeMode, CreativePalette,
+    ProgressiveGenerationConfig, ProgressiveRefiner,
+};
+use cascade_training::{train_model, TrainingConfig};
 use std::{
     env,
     io::{self, Write},
-    path::Path,
+    path::PathBuf,
 };
 use transformer_tokenization::{AdvancedTokenizer, TokenizerConfig};
-use utils::prompts::build_prompt;
+use utils::{prompts::build_prompt, wiki::preprocess_wikipedia_dump};
 
 use transformer::{check_available_backends, setup_device};
 
@@ -122,14 +118,36 @@ fn main() -> Result<()> {
     let device = setup_device()?;
     println!("Device: {:?}\n", device);
 
-    let data_path = "pt-data/input.txt";
-    if !Path::new(data_path).exists() {
-        anyhow::bail!("Data file not found: {data_path}");
+    let data_path = env::var("DATA_PATH")
+        .unwrap_or_else(|_| "pt-data/enwiki-latest-pages-articles-multistream.xml.bz2".to_string());
+    let mut corpus_path = PathBuf::from(&data_path);
+    if !corpus_path.exists() {
+        anyhow::bail!("Data file not found: {}", corpus_path.display());
+    }
+
+    if corpus_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("bz2"))
+        .unwrap_or(false)
+    {
+        let cleaned_name = corpus_path
+            .file_stem()
+            .map(|stem| format!("{}-clean.txt", stem.to_string_lossy()))
+            .unwrap_or_else(|| "wiki-clean.txt".to_string());
+        let cleaned_path = corpus_path
+            .parent()
+            .map(|p| p.join(cleaned_name))
+            .unwrap_or_else(|| PathBuf::from("pt-data/wiki-clean.txt"));
+        preprocess_wikipedia_dump(&corpus_path, &cleaned_path)
+            .with_context(|| "Failed to preprocess Wikipedia dump")?;
+        corpus_path = cleaned_path;
     }
 
     let tokenizer_cfg = TokenizerConfig::default();
-    let tokenizer = AdvancedTokenizer::from_file(data_path, device.clone(), tokenizer_cfg)
+    let tokenizer = AdvancedTokenizer::from_file(&corpus_path, device.clone(), tokenizer_cfg)
         .context("Failed to create tokenizer")?;
+    println!("Using corpus: {}", corpus_path.display());
     println!(
         "Tokenizer ready: vocab {} | train tokens {} | val tokens {}",
         tokenizer.vocab_size(),
@@ -158,14 +176,20 @@ fn main() -> Result<()> {
     let stats = train_model(&model, &tokenizer, &mut varmap, &training_config)
         .context("Training failed")?;
     if let Some(last) = stats.last() {
-        println!("Final train loss: {:.4} | val loss: {:.4}", last.train_loss, last.val_loss);
+        println!(
+            "Final train loss: {:.4} | val loss: {:.4}",
+            last.train_loss, last.val_loss
+        );
     }
 
     interactive_generation_loop(&model, &tokenizer)?;
     Ok(())
 }
 
-fn interactive_generation_loop(model: &CascadeTransformer, tokenizer: &AdvancedTokenizer) -> Result<()> {
+fn interactive_generation_loop(
+    model: &CascadeTransformer,
+    tokenizer: &AdvancedTokenizer,
+) -> Result<()> {
     println!("\nInteractive generation. Empty prompt to exit.\n");
     let palette = CreativePalette::new(CreativeMode::Dramatic);
     let progressive = ProgressiveRefiner::new(ProgressiveGenerationConfig::default());
@@ -189,7 +213,11 @@ fn interactive_generation_loop(model: &CascadeTransformer, tokenizer: &AdvancedT
             println!("Prompt could not be encoded.");
             continue;
         }
-        let prompt_tensor = Tensor::from_vec(prompt_tokens.clone(), (1, prompt_tokens.len()), tokenizer.device())?;
+        let prompt_tensor = Tensor::from_vec(
+            prompt_tokens.clone(),
+            (1, prompt_tokens.len()),
+            tokenizer.device(),
+        )?;
         let generated = progressive.generate(model, &prompt_tensor, &palette)?;
         let flat = generated.get(0)?;
         let indices = flat.to_vec1::<u32>()?;
