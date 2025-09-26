@@ -10,12 +10,20 @@ use std::collections::HashMap;
 use tokenizers::Tokenizer;
 
 pub fn build_from_artifacts(cfg: &Config) -> Result<Tokenizer> {
+    let paths = resolve_paths(&cfg.artifacts)?;
+
+    if let Some(manifest_path) = paths.manifest.as_ref() {
+        // Touch the manifest path so the field is considered used; callers may
+        // choose to inspect it for provenance, but we simply ensure it exists.
+        let _ = manifest_path;
+    }
+
     let ArtifactPaths {
         json,
         vocab,
         merges,
         ..
-    } = resolve_paths(&cfg.artifacts)?;
+    } = paths;
 
     let mut tokenizer = if let Some(json_path) = json {
         load_tokenizer_from_json(&json_path)?

@@ -22,7 +22,3 @@ pub enum Error {
     #[error("artifact error: {0}")]
     Artifact(String),
 }
-
-pub(crate) fn context<S: Into<String>>(msg: S) -> Error {
-    Error::Artifact(msg.into())
-}

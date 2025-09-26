@@ -190,6 +190,7 @@ fn default_config(tmp: &Path) -> Result<Config> {
 
 fn write_corpus(dir: &Path) -> Result<()> {
     let path = dir.join("corpus.txt");
+    println!("roundtrip test corpus lines: {:?}", CORPUS_LINES);
     let contents = CORPUS_LINES.join("\n");
     fs::write(path, contents + "\n")?;
     Ok(())

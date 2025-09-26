@@ -1,9 +1,17 @@
-use crate::config::{ArtifactsCfg, Config};
+use crate::config::ArtifactsCfg;
 use crate::errors::{Error, Result};
-use crate::types::{ArtifactManifest, ArtifactPaths};
+use crate::types::ArtifactPaths;
+#[cfg(feature = "train")]
+use crate::types::ArtifactManifest;
+#[cfg(feature = "train")]
+use crate::config::Config;
+#[cfg(feature = "train")]
 use serde_json;
+#[cfg(feature = "train")]
 use sha2::{Digest, Sha256};
+#[cfg(feature = "train")]
 use std::fs::{self, File};
+#[cfg(feature = "train")]
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use tokenizers::models::bpe::BPE;
@@ -12,7 +20,6 @@ use tokenizers::Tokenizer;
 const TOKENIZER_JSON_ERR: &str = "tokenizer json not found at";
 const VOCAB_JSON_ERR: &str = "vocab json not found at";
 const MERGES_TXT_ERR: &str = "merges txt not found at";
-const MANIFEST_ERR: &str = "manifest not found at";
 
 pub fn load_tokenizer_from_json(path: &Path) -> Result<Tokenizer> {
     ensure_file(path, TOKENIZER_JSON_ERR)?;
@@ -31,6 +38,7 @@ pub fn load_bpe_from_vocab_merges(vocab: &Path, merges: &Path) -> Result<BPE> {
         .map_err(Error::from)
 }
 
+#[cfg(feature = "train")]
 pub fn save_tokenizer_json(tok: &Tokenizer, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.exists() {
@@ -41,6 +49,7 @@ pub fn save_tokenizer_json(tok: &Tokenizer, path: &Path) -> Result<()> {
     tok.save(path, false).map_err(Error::from)
 }
 
+#[cfg(feature = "train")]
 pub fn write_manifest(manifest_path: &Path, manifest: &ArtifactManifest) -> Result<()> {
     if let Some(parent) = manifest_path.parent() {
         if !parent.exists() {
@@ -56,14 +65,7 @@ pub fn write_manifest(manifest_path: &Path, manifest: &ArtifactManifest) -> Resu
     Ok(())
 }
 
-pub fn read_manifest(manifest_path: &Path) -> Result<ArtifactManifest> {
-    ensure_file(manifest_path, MANIFEST_ERR)?;
-    let file = File::open(manifest_path)?;
-    let reader = BufReader::new(file);
-    let manifest = serde_json::from_reader(reader)?;
-    Ok(manifest)
-}
-
+#[cfg(feature = "train")]
 pub fn compute_config_hash(cfg: &Config, extra_paths: &[&Path]) -> Result<String> {
     let mut hasher = Sha256::new();
     let cfg_bytes = serde_json::to_vec(cfg)?;
@@ -148,6 +150,11 @@ pub fn resolve_paths(cfg: &ArtifactsCfg) -> Result<ArtifactPaths> {
                 ));
             }
         }
+    }
+
+    if let Some(ref path) = manifest {
+        // Manifest is optional; verify existence only if provided.
+        ensure_file(path, "manifest not found at")?;
     }
 
     Ok(ArtifactPaths {
