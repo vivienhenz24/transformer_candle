@@ -15,9 +15,11 @@ name = "transformer"
 path = "main.rs"
 
 [dependencies]
+# local crates
 pretraining-data = { path = "crates/pretraining-data" }
 tokenizer = { path = "crates/tokenizer" }
 embedding = { path = "crates/embedding" }
+# huggingface's candle and tokenizers
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 tokenizers = "0.22.1"

@@ -18,5 +18,5 @@ Thumbs.db
 
 
 # Added by cargo
-
+crates/tokenizer/target/
 /target

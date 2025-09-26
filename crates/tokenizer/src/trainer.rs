@@ -15,9 +15,9 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokenizers::models::bpe::{BpeTrainer, BPE};
-use tokenizers::models::ModelWrapper;
+use tokenizers::models::{ModelWrapper, TrainerWrapper};
 use tokenizers::tokenizer::AddedToken;
-use tokenizers::Tokenizer;
+use tokenizers::{Model, Tokenizer};
 
 const SHUFFLE_CHUNK_SIZE: usize = 2048;
 
@@ -50,6 +50,7 @@ pub fn train_from_corpus(cfg: &Config) -> Result<Tokenizer> {
     let mut tokenizer = Tokenizer::new(BPE::default());
     let byte_level = build_byte_level(&cfg.pretokenizer)?;
     tokenizer.with_pre_tokenizer(Some(byte_level));
+    tokenizer.with_decoder(Some(crate::pretokenizer::build_byte_level_decoder()));
 
     let special_tokens: Vec<AddedToken> = cfg
         .model
@@ -59,12 +60,13 @@ pub fn train_from_corpus(cfg: &Config) -> Result<Tokenizer> {
         .map(|token| AddedToken::from(token, true))
         .collect();
 
-    let mut trainer = BpeTrainer::builder()
+    let mut trainer: TrainerWrapper = BpeTrainer::builder()
         .vocab_size(cfg.model.vocab_size)
         .min_frequency(cfg.model.min_frequency.into())
         .show_progress(false)
         .special_tokens(special_tokens)
-        .build();
+        .build()
+        .into();
 
     let mut corpus = CorpusIterator::new(
         training_cfg.inputs.clone(),
@@ -164,7 +166,7 @@ pub fn train_from_corpus(cfg: &Config) -> Result<Tokenizer> {
 }
 
 fn absolute_in_dir(dir: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
+    if path.is_absolute() || path.starts_with(dir) {
         path.to_path_buf()
     } else {
         dir.join(path)
@@ -268,25 +270,27 @@ impl CorpusIterator {
                 return Ok(false);
             }
 
-            let state = match self.current.as_mut() {
-                Some(state) => state,
-                None => {
-                    let next = match self.files.pop_front() {
-                        Some(path) => path,
-                        None => return Ok(false),
-                    };
-                    let file = File::open(&next)?;
-                    self.current = Some(FileState {
-                        reader: BufReader::new(file),
-                    });
-                    self.current.as_mut().unwrap()
-                }
-            };
+            if self.current.is_none() {
+                let next = match self.files.pop_front() {
+                    Some(path) => path,
+                    None => return Ok(false),
+                };
+                let file = File::open(&next)?;
+                self.current = Some(FileState {
+                    reader: BufReader::new(file),
+                });
+            }
 
             let mut batch = Vec::with_capacity(SHUFFLE_CHUNK_SIZE);
             while batch.len() < SHUFFLE_CHUNK_SIZE {
                 let mut line = String::new();
-                let read = state.reader.read_line(&mut line)?;
+                let read = {
+                    let state = self
+                        .current
+                        .as_mut()
+                        .expect("reader state should exist while filling batch");
+                    state.reader.read_line(&mut line)?
+                };
                 if read == 0 {
                     self.current = None;
                     break;

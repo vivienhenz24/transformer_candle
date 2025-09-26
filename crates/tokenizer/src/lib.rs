@@ -36,6 +36,8 @@ mod postprocessor;
 mod pretokenizer;
 mod types;
 mod validate;
+#[cfg(feature = "train")]
+mod trainer;
 
 pub use config::{ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg};
 pub use errors::{Error, Result};

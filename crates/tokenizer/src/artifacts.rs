@@ -38,7 +38,7 @@ pub fn save_tokenizer_json(tok: &Tokenizer, path: &Path) -> Result<()> {
         }
     }
 
-    tok.save(path, None).map_err(Error::from)
+    tok.save(path, false).map_err(Error::from)
 }
 
 pub fn write_manifest(manifest_path: &Path, manifest: &ArtifactManifest) -> Result<()> {
@@ -102,7 +102,7 @@ pub fn resolve_paths(cfg: &ArtifactsCfg) -> Result<ArtifactPaths> {
 
     let resolve = |value: &Option<PathBuf>| -> Option<PathBuf> {
         value.as_ref().map(|path| {
-            if path.is_absolute() {
+            if path.is_absolute() || path.starts_with(dir) {
                 path.clone()
             } else {
                 dir.join(path)

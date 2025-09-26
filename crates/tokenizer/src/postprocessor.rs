@@ -1,7 +1,7 @@
 use crate::config::PostCfg;
 use crate::errors::{Error, Result};
 use std::collections::HashMap;
-use tokenizers::processors::template::{TemplateProcessing, TemplateProcessingBuilderError};
+use tokenizers::processors::template::TemplateProcessing;
 
 const BOS_TOKEN: &str = "<bos>";
 const EOS_TOKEN: &str = "<eos>";
@@ -28,26 +28,23 @@ pub fn maybe_build_template(
 
     let mut builder = TemplateProcessing::builder();
 
-    let single_template = single_sequence_template(cfg);
-    builder = builder
-        .try_single(single_template)
-        .map_err(builder_error)?;
-
-    let pair_template = pair_sequence_template(cfg);
-    builder = builder
-        .try_pair(pair_template)
-        .map_err(builder_error)?;
+    builder
+        .try_single(single_sequence_template(cfg))
+        .map_err(Error::Validation)?;
+    builder
+        .try_pair(pair_sequence_template(cfg))
+        .map_err(Error::Validation)?;
 
     let special_tokens = special_ids
         .iter()
         .map(|(token, id)| (token.clone(), *id))
         .collect::<Vec<_>>();
-    builder = builder.special_tokens(special_tokens);
+    builder.special_tokens(special_tokens);
 
     builder
         .build()
         .map(Some)
-        .map_err(builder_error)
+        .map_err(|err| Error::Validation(err.to_string()))
 }
 
 fn single_sequence_template(cfg: &PostCfg) -> Vec<String> {
@@ -94,8 +91,4 @@ fn pair_sequence_template(cfg: &PostCfg) -> Vec<String> {
     }
 
     pieces
-}
-
-fn builder_error(err: TemplateProcessingBuilderError) -> Error {
-    Error::Validation(err.to_string())
 }

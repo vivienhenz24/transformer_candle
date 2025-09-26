@@ -35,6 +35,7 @@ pub fn build_from_artifacts(cfg: &Config) -> Result<Tokenizer> {
 
     let byte_level = build_byte_level(&cfg.pretokenizer)?;
     tokenizer.with_pre_tokenizer(Some(byte_level));
+    tokenizer.with_decoder(Some(crate::pretokenizer::build_byte_level_decoder()));
 
     let mut special_ids: HashMap<String, u32> = HashMap::new();
     for token in &cfg.model.special_tokens {
