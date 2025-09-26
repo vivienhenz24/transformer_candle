@@ -1,6 +1,6 @@
 
 fn main() {
-    println!("Transformer project initialized");
+    println!("Transformer started");
     pretraining_data::init();
     embedding::init();
 }
