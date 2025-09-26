@@ -1,0 +1,195 @@
+#![cfg(feature = "train")]
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokenizer::{
+    build_from_artifacts, train_bbpe, ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg,
+};
+use tokenizer::config::TrainingCfg;
+use tokenizer::errors::Result;
+use tokenizer::Error;
+
+const CORPUS_LINES: [&str; 9] = [
+    "Hello, world!",
+    "hello hello helper help",
+    " leading space",
+    "trailing space ",
+    "multiple spaces",
+    "naïve café",
+    "emoji 😊 works",
+    "日本語テキスト mixed",
+    "über Straße",
+];
+
+#[test]
+fn train_and_basic_roundtrip() -> Result<()> {
+    let tmp = tmp_dir()?;
+    let cfg = default_config(&tmp)?;
+    train_bbpe(&cfg)?;
+    let tok = build_from_artifacts(&cfg)?;
+
+    assert!(tok.get_vocab_size(true) >= cfg.model.vocab_size);
+
+    let text = "Hello world";
+    let encoding = tok.encode(text, false)?;
+    let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+    assert_eq!(decoded, text);
+
+    let encoding = tok.encode(text, true)?;
+    let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+    assert_eq!(decoded, text);
+
+    let start = text.find("world").expect("substring present");
+    let end = start + "world".len();
+    let tokens = encoding.get_tokens();
+    let offsets = encoding.get_offsets();
+    let mut matched = false;
+    for (token, (offset_start, offset_end)) in tokens.iter().zip(offsets.iter()) {
+        if token.contains("world") {
+            assert_eq!((*offset_start, *offset_end), (start, end));
+            matched = true;
+            break;
+        }
+    }
+    assert!(matched, "expected token covering 'world'");
+
+    Ok(())
+}
+
+#[test]
+fn unicode_roundtrip() -> Result<()> {
+    let tmp = tmp_dir()?;
+    let cfg = default_config(&tmp)?;
+    train_bbpe(&cfg)?;
+    let tok = build_from_artifacts(&cfg)?;
+
+    let samples = [
+        "naïve café",
+        "emoji 😊 works",
+        "über Straße",
+        "日本語テキスト",
+    ];
+
+    for sample in samples.iter() {
+        let encoding = tok.encode(sample, false)?;
+        let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+        assert_eq!(decoded, *sample);
+
+        let encoding = tok.encode(sample, true)?;
+        let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+        assert_eq!(decoded, *sample);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn pair_inputs_roundtrip() -> Result<()> {
+    let tmp = tmp_dir()?;
+    let mut cfg = default_config(&tmp)?;
+    if let Some(post) = cfg.postprocessor.as_mut() {
+        post.pair_template = true;
+    }
+    train_bbpe(&cfg)?;
+    let tok = build_from_artifacts(&cfg)?;
+
+    let encoding = tok.encode(("Question?", "Answer!"), true)?;
+    let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+    assert_eq!(decoded, "Question? Answer!");
+
+    let first_pos = decoded.find("Question?").unwrap();
+    let second_pos = decoded.find("Answer!").unwrap();
+    assert!(first_pos < second_pos);
+
+    Ok(())
+}
+
+#[test]
+fn whitespace_stability() -> Result<()> {
+    let tmp = tmp_dir()?;
+    let cfg = default_config(&tmp)?;
+    train_bbpe(&cfg)?;
+    let tok = build_from_artifacts(&cfg)?;
+
+    let samples = [
+        " leading",
+        "trailing ",
+        "a b c",
+        "tabs\tand spaces",
+    ];
+
+    for sample in samples.iter() {
+        let encoding = tok.encode(sample, false)?;
+        let decoded = tok.decode(encoding.get_ids().to_vec(), true)?;
+        assert_eq!(decoded.as_bytes(), sample.as_bytes());
+    }
+
+    Ok(())
+}
+
+fn tmp_dir() -> Result<PathBuf> {
+    let pid = process::id();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| Error::Validation(format!("time went backwards: {e}")))?
+        .as_nanos();
+    let path = PathBuf::from("target")
+        .join("bbpe_tests")
+        .join(format!("roundtrip_{}_{}", pid, timestamp));
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
+fn default_config(tmp: &Path) -> Result<Config> {
+    write_corpus(tmp)?;
+
+    Ok(Config {
+        model: ModelCfg {
+            vocab_size: 320,
+            min_frequency: 2,
+            dropout: None,
+            special_tokens: vec![
+                "<pad>".to_string(),
+                "<unk>".to_string(),
+                "<bos>".to_string(),
+                "<eos>".to_string(),
+            ],
+            byte_fallback_on_decode: true,
+        },
+        pretokenizer: ByteLevelCfg {
+            add_prefix_space: false,
+            trim_offsets: true,
+            use_regex: true,
+        },
+        postprocessor: Some(PostCfg {
+            add_bos: true,
+            add_eos: true,
+            pair_template: false,
+        }),
+        #[cfg(feature = "train")]
+        training: Some(TrainingCfg {
+            inputs: vec![tmp.join("corpus.txt")],
+            seed: 42,
+            shuffle: false,
+            max_lines: None,
+            num_threads: Some(1),
+        }),
+        artifacts: ArtifactsCfg {
+            dir: tmp.to_path_buf(),
+            tokenizer_json: Some(tmp.join("tokenizer.json")),
+            vocab_json: Some(tmp.join("vocab.json")),
+            merges_txt: Some(tmp.join("merges.txt")),
+            manifest: Some(tmp.join("manifest.json")),
+        },
+    })
+}
+
+fn write_corpus(dir: &Path) -> Result<()> {
+    let path = dir.join("corpus.txt");
+    let contents = CORPUS_LINES.join("\n");
+    fs::write(path, contents + "\n")?;
+    Ok(())
+}
