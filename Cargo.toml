@@ -2,6 +2,7 @@
 members = [
     "crates/pretraining-data",
     "crates/tokenizer",
+    "crates/embedding",
 ]
 
 [package]
@@ -16,3 +17,4 @@ path = "main.rs"
 [dependencies]
 pretraining-data = { path = "crates/pretraining-data" }
 tokenizer = { path = "crates/tokenizer" }
+embedding = { path = "crates/embedding" }

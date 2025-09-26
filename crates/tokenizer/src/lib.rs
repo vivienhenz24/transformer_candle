@@ -1,7 +1,5 @@
 //! Tokenizer crate
-//! 
-//! This crate provides tokenization functionality for transformer models,
-//! including text preprocessing, vocabulary management, and encoding/decoding.
+
 
 // pub mod vocabulary;
 // pub mod encoder;
