@@ -12,7 +12,7 @@ use tokenizer::config::TrainingCfg;
 use tokenizer::errors::Result;
 use tokenizer::Error;
 
-const CORPUS_LINES: [&str; 11] = [
+const CORPUS_LINES: [&str; 18] = [
     "Hello, world!",
     "hello hello helper help",
     " leading space",
@@ -24,6 +24,13 @@ const CORPUS_LINES: [&str; 11] = [
     "über Straße",
     "tabs\tand spaces",
     "Question? Answer!",
+    "Don’t make the bucket public unless you truly intend it.",
+    "Make sure your corpus license allows cloud storage and training use. Some corpora have redistribution or commercial-use limits.",
+    "Don't forget to include the training configuration in your dataset.",
+    "Keep your dataset size manageable, as larger datasets require more compute resources.",
+    "Consider using a dataset split to ensure your model generalizes well.",
+    "Monitor the training process closely to detect any issues early.",
+    "Regularly save checkpoints to avoid losing progress."
 ];
 
 #[test]
