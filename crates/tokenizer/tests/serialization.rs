@@ -9,10 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tokenizer::config::TrainingCfg;
 use tokenizer::errors::Result;
+use tokenizer::Error;
 use tokenizer::{
     build_from_artifacts, train_bbpe, ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg,
 };
-use tokenizer::Error;
 use tokenizers::Tokenizer;
 
 const SAMPLE_INPUTS: [&str; 4] = [
@@ -33,7 +33,10 @@ fn save_and_reload_tokenizer_json() -> Result<()> {
         .tokenizer_json
         .as_ref()
         .expect("tokenizer.json path configured");
-    assert!(tokenizer_path.exists(), "tokenizer.json should exist after training");
+    assert!(
+        tokenizer_path.exists(),
+        "tokenizer.json should exist after training"
+    );
 
     let mut cfg_no_json = cfg.clone();
     cfg_no_json.artifacts.tokenizer_json = None;
@@ -115,8 +118,14 @@ fn manifest_integrity_and_vocab_shape() -> Result<()> {
 
     let min_vocab = cfg.model.special_tokens.len();
     let max_vocab = cfg.model.vocab_size + cfg.model.special_tokens.len() + 64;
-    assert!(vocab_len >= min_vocab, "vocab should include special tokens");
-    assert!(vocab_len <= max_vocab, "vocab larger than expected upper bound");
+    assert!(
+        vocab_len >= min_vocab,
+        "vocab should include special tokens"
+    );
+    assert!(
+        vocab_len <= max_vocab,
+        "vocab larger than expected upper bound"
+    );
 
     Ok(())
 }
@@ -162,8 +171,7 @@ fn json_roundtrip_does_not_change_behavior() -> Result<()> {
     let raw = fs::read(tokenizer_path)?;
     let value: Value = serde_json::from_slice(&raw)?;
 
-    let copy_path = tokenizer_path
-        .with_file_name("tokenizer_copy.json");
+    let copy_path = tokenizer_path.with_file_name("tokenizer_copy.json");
     let mut file = fs::File::create(&copy_path)?;
     serde_json::to_writer_pretty(&mut file, &value)?;
     file.write_all(b"\n")?;
