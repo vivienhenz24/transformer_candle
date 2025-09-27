@@ -26,6 +26,7 @@ fn plan_naive_vs_vectorized_rotation_match() {
     todo!("implement naive vs vectorized rotation comparison");
 }
 
+
 #[test]
 #[ignore = "tail passthrough check pending implementation"]
 fn plan_tail_dimensions_unchanged() {
