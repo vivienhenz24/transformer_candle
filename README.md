@@ -18,6 +18,7 @@ main libs used are huggingface's candle and tokenizers.
 - `crates/tokenizer`: thin wrapper around Hugging Face's tokenizer library, offering config-driven byte-level BPE loading and (optionally) training.
 - `crates/pretraining-data`: helpers for sourcing and validating pretraining corpora.
 - `tests/`: integration and regression coverage for tokenizer round-tripping, serialization, and end-to-end flows.
+- `docs/rope.md`: overview of rotary positional embeddings, configuration knobs, and caching behaviour.
 
 ### Tokenizer Artifacts
 - Place pretrained artifacts under the directory configured in `Config.artifacts` (typically `crates/tokenizer/target/...`).
@@ -28,4 +29,3 @@ main libs used are huggingface's candle and tokenizers.
 - `cargo fmt && cargo clippy` keeps formatting and linting tidy.
 - `cargo test` runs unit/integration suites; add `--features train` when exercising tokenizer training scenarios.
 - `RUST_LOG=info cargo run --release` enables logging hooks when Candle executes inference steps.
-

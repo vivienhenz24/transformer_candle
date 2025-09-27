@@ -1,18 +1,12 @@
-//! Integration tests for embedding crate
+//! Integration smoke tests for the embedding crate.
 
-use embedding;
-
-#[test]
-fn test_embedding_init() {
-    // Test that the embedding module initializes correctly
-    embedding::init();
-    // Add more integration tests here as the crate grows
-}
+use embedding::positional::rope::{RopeConfig, RopeScaling};
 
 #[test]
-fn test_embedding_basic_functionality() {
-    // Placeholder for future integration tests
-    // This will test the interaction between different modules
-    // and ensure the crate works correctly as a whole
-    assert!(true, "Basic functionality test placeholder");
+fn positional_module_exposes_defaults() {
+    let config = RopeConfig::default();
+    assert_eq!(config.head_dim, 0);
+    assert_eq!(config.rope_theta, 10_000.0);
+    assert_eq!(config.rotate_dim, None);
+    assert!(matches!(config.scaling, RopeScaling::None));
 }

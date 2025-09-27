@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo build
+        run: cargo build --locked --all-targets
+
+      - name: Cargo test
+        run: cargo test --all --locked
+
+      - name: Cargo run demo
+        run: cargo run --locked
+
+      - name: Cargo clippy
+        run: cargo clippy --all-targets --all-features
