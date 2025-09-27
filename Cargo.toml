@@ -3,6 +3,7 @@ members = [
     "crates/pretraining-data",
     "crates/tokenizer",
     "crates/embedding",
+    "crates/attention",
 ]
 
 [package]
@@ -19,6 +20,7 @@ path = "main.rs"
 pretraining-data = { path = "crates/pretraining-data" }
 tokenizer = { path = "crates/tokenizer" }
 embedding = { path = "crates/embedding" }
+attention = { path = "crates/attention" }
 # huggingface's candle and tokenizers
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
