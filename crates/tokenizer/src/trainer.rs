@@ -22,10 +22,9 @@ use tokenizers::{Model, Tokenizer};
 const SHUFFLE_CHUNK_SIZE: usize = 2048;
 
 pub fn train_from_corpus(cfg: &Config) -> Result<Tokenizer> {
-    let training_cfg = cfg
-        .training
-        .as_ref()
-        .ok_or(Error::InvalidConfig("training section required when feature=\"train\""))?;
+    let training_cfg = cfg.training.as_ref().ok_or(Error::InvalidConfig(
+        "training section required when feature=\"train\"",
+    ))?;
 
     if training_cfg.inputs.is_empty() {
         return Err(Error::InvalidConfig(
@@ -178,7 +177,11 @@ fn save_bpe_files(model: &ModelWrapper, vocab_path: &Path, merges_path: &Path) -
         .parent()
         .ok_or_else(|| Error::Artifact("vocab path missing parent".into()))?;
 
-    if dir != merges_path.parent().ok_or_else(|| Error::Artifact("merges path missing parent".into()))? {
+    if dir
+        != merges_path
+            .parent()
+            .ok_or_else(|| Error::Artifact("merges path missing parent".into()))?
+    {
         return Err(Error::Artifact(
             "vocab and merges must share the same parent directory".into(),
         ));
@@ -201,8 +204,10 @@ fn save_bpe_files(model: &ModelWrapper, vocab_path: &Path, merges_path: &Path) -
         }
     }
 
-    let saved_vocab = saved_vocab.ok_or_else(|| Error::Artifact("BPE save did not produce vocab.json".into()))?;
-    let saved_merges = saved_merges.ok_or_else(|| Error::Artifact("BPE save did not produce merges.txt".into()))?;
+    let saved_vocab =
+        saved_vocab.ok_or_else(|| Error::Artifact("BPE save did not produce vocab.json".into()))?;
+    let saved_merges = saved_merges
+        .ok_or_else(|| Error::Artifact("BPE save did not produce merges.txt".into()))?;
 
     if saved_vocab != *vocab_path {
         if vocab_path.exists() {
@@ -235,12 +240,7 @@ struct FileState {
 }
 
 impl CorpusIterator {
-    fn new(
-        mut inputs: Vec<PathBuf>,
-        shuffle: bool,
-        seed: u64,
-        max_lines: Option<usize>,
-    ) -> Self {
+    fn new(mut inputs: Vec<PathBuf>, shuffle: bool, seed: u64, max_lines: Option<usize>) -> Self {
         let rng = if shuffle {
             let mut rng = StdRng::seed_from_u64(seed);
             inputs.shuffle(&mut rng);

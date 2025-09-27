@@ -53,14 +53,33 @@ match the query/key tensors. The cache must be thread-safe, bounded (e.g. LRU), 
 `scaling_fingerprint` encodes the scaling variant, its parameters, and the training context. Logging the fingerprint once per run aids
 post-mortem analysis without leaking implementation-specific details.
 
+### Choosing Between PI and NTK Scaling
+
+The two long-context strategies serve different purposes:
+
+- **PositionInterpolation (PI)** compresses positional indices via `floor(position / scale)` while clamping to the training window. Use PI when
+  you want to reuse a model verbatim at longer sequence lengths and are comfortable with the mild loss of resolution that comes from downscaling.
+  PI is available behind the `long-context` feature flag and is enabled by selecting `ROPE_MODE=pi` (and an optional `ROPE_PI_SCALE`).
+- **NTKAware (NTK)** keeps positions unchanged but adjusts the rotary base frequency derived from `rope_theta`. Reach for NTK when you would like to
+  preserve per-token spacing and are ready to retune the effective theta/alpha pair for the target context.
+
 ## Demo Path
 
-`main.rs` contains a stubbed `run_rope_demo` routine that will eventually:
+`main.rs` ships a minimal demo that exercises RoPE end-to-end.
 
-1. Build synthetic Q/K tensors (`[1, 2, 8, head_dim]`).
-2. Construct a `RopeConfig` (honouring any `ROPE_*` env overrides).
-3. Precompute sin/cos via `get_sin_cos` and apply RoPE with `apply_rope_to_qk`.
-4. Print L2 norm changes for the rotated slice and verify the tail dimensions remain untouched.
-5. Re-run the path to confirm cache hits are logged.
+### How to Run the Demo
+
+```bash
+cargo run
+```
+
+The program prints the usual start-up banner followed by a summary similar to:
+
+```
+rotate_dim=8 l2_delta_first_slice=52.708580 tail_preserved=true cache_hits=1 cache_misses=1 second_call_hit=true
+```
+
+This confirms that the leading `rotate_dim` slice changed (non-zero L2 delta), the tail remained bitwise identical, and the second lookup reused the
+cached sin/cos tables (`second_call_hit=true`). Add `--features long-context` if you want to experiment with PI/NTK scaling in the demo or tests.
 
 Once attention integration lands, these helpers will slot into the standard transformer attention mechanism without further changes.

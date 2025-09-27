@@ -1,26 +1,76 @@
-//! Benchmark plan for RoPE rotation and cache performance.
-//!
-//! Matrix under test:
-//! - Sequence lengths: {1, 256, 4_096, 32_768}
-//! - Head dimensions: {64, 128}
-//! - Number of heads: {8, 32}
-//! - Scaling modes: `RopeScaling::None`, `RopeScaling::PositionInterpolation { scale: 8.0 }`,
-//!   and (guarded behind the `long-context` feature) `RopeScaling::NTKAware { alpha: 8.0 }`.
-//!
-//! Benchmark objectives to verify once implementations exist:
-//! - After cache warm-up, the steady-state path performs zero additional heap allocations
-//!   (tracked via allocation counters or custom allocators).
-//! - Measured throughput scales approximately linearly with `seq_len` and `n_heads`; any
-//!   super-linear behaviour must be justified.
-//! - Cold-start timings report cache build latency separately from rotation throughput
-//!   to attribute costs accurately.
-//!
-//! Skeleton placeholders below keep `cargo bench` aware of the upcoming suite without providing
-//! executable benchmarks yet.
+use std::time::Instant;
 
-#![cfg_attr(not(test), allow(dead_code))]
+use candle_core::{Device, Result, Tensor};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use embedding::positional::rope::{
+    apply_rope_to_qk, get_sin_cos, reset_sin_cos_cache_stats, RopeConfig, RopeScaling,
+};
 
-#[cfg(test)]
-mod rope_bench_plan {
-    // TODO: Implement Criterion benchmarks covering the matrix above once RoPE is wired up.
+fn build_inputs(
+    batch: usize,
+    heads: usize,
+    seq_len: usize,
+    head_dim: usize,
+    device: &Device,
+) -> Result<(Tensor, Tensor)> {
+    let total = batch * heads * seq_len * head_dim;
+    let q_data: Vec<f32> = (0..total).map(|i| (i as f32) * 0.001).collect();
+    let k_data: Vec<f32> = (0..total).map(|i| (i as f32) * 0.002 - 1.0).collect();
+    let q = Tensor::from_vec(q_data, (batch, heads, seq_len, head_dim), device)?;
+    let k = Tensor::from_vec(k_data, (batch, heads, seq_len, head_dim), device)?;
+    Ok((q, k))
 }
+
+fn rope_cold_vs_warm(c: &mut Criterion) {
+    let device = Device::Cpu;
+    let batch = 1;
+    let heads = 8;
+    let seq_len = 4_096;
+    let head_dim = 64;
+    let rotate_dim = head_dim;
+    let cfg = RopeConfig {
+        head_dim,
+        rope_theta: 10_000.0,
+        rotate_dim: Some(rotate_dim),
+        scaling: RopeScaling::None,
+    };
+
+    let (q, k) = build_inputs(batch, heads, seq_len, head_dim, &device).unwrap();
+
+    c.bench_function("rope_cold_cache", |b| {
+        b.iter(|| {
+            reset_sin_cos_cache_stats();
+            let (sin, cos) = get_sin_cos(seq_len, &cfg, &device);
+            let (q_rot, k_rot) = apply_rope_to_qk(&q, &k, 0, &cfg, &sin, &cos).unwrap();
+            black_box(q_rot);
+            black_box(k_rot);
+        })
+    });
+
+    // Preload cache for warm benchmark and capture tensors once.
+    reset_sin_cos_cache_stats();
+    let start = Instant::now();
+    let (sin, cos) = get_sin_cos(seq_len, &cfg, &device);
+    let cold_warmup = start.elapsed();
+    eprintln!(
+        "rope warmup: seq_len={} rotate_dim={} time={:.2?}",
+        seq_len, rotate_dim, cold_warmup
+    );
+
+    c.bench_function("rope_warm_cache", |b| {
+        b.iter(|| {
+            let (hits_before, misses_before) =
+                embedding::positional::rope::sin_cos_cache_counters();
+            let (q_rot, k_rot) = apply_rope_to_qk(&q, &k, 0, &cfg, &sin, &cos).unwrap();
+            black_box(&q_rot);
+            black_box(&k_rot);
+            let (hits_after, misses_after) = embedding::positional::rope::sin_cos_cache_counters();
+            // Ensure no additional sin/cos allocations occur in the steady state.
+            assert_eq!(misses_after, misses_before);
+            assert_eq!(hits_after, hits_before);
+        })
+    });
+}
+
+criterion_group!(rope_benches, rope_cold_vs_warm);
+criterion_main!(rope_benches);

@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokenizer::{
-    build_from_artifacts, train_bbpe, ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg,
-};
 use tokenizer::config::TrainingCfg;
 use tokenizer::errors::Result;
 use tokenizer::Error;
+use tokenizer::{
+    build_from_artifacts, train_bbpe, ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg,
+};
 
 const CORPUS_LINES: [&str; 18] = [
     "Hello, world!",
@@ -64,7 +64,10 @@ fn train_and_basic_roundtrip() -> Result<()> {
             reconstructed.push_str(&text[overlap_start..overlap_end]);
         }
     }
-    assert_eq!(reconstructed, "world", "expected offsets to recover substring 'world'");
+    assert_eq!(
+        reconstructed, "world",
+        "expected offsets to recover substring 'world'"
+    );
 
     Ok(())
 }
@@ -122,12 +125,7 @@ fn whitespace_stability() -> Result<()> {
     train_bbpe(&cfg)?;
     let tok = build_from_artifacts(&cfg)?;
 
-    let samples = [
-        " leading",
-        "trailing ",
-        "a b c",
-        "tabs\tand spaces",
-    ];
+    let samples = [" leading", "trailing ", "a b c", "tabs\tand spaces"];
 
     for &sample in samples.iter() {
         let encoding = tok.encode(sample, false)?;

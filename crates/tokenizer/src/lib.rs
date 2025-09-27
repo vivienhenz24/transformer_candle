@@ -34,10 +34,10 @@ mod artifacts;
 mod bbpe;
 mod postprocessor;
 mod pretokenizer;
-mod types;
-mod validate;
 #[cfg(feature = "train")]
 mod trainer;
+mod types;
+mod validate;
 
 pub use config::{ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg};
 pub use errors::{Error, Result};
