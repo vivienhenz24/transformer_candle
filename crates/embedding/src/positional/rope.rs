@@ -27,9 +27,10 @@ pub struct RopeConfig {
 
 /// Available scaling strategies for rotary positional embeddings.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum RopeScaling {
     /// Baseline RoPE behaviour without any context extension tweaks.
+    #[default]
     None,
     /// (requires `long-context`) NTK-aware scaling controlled by α (typically ≥ 1.0) to stabilise longer contexts.
     #[cfg(feature = "long-context")]
@@ -37,12 +38,6 @@ pub enum RopeScaling {
     /// (requires `long-context`) Position interpolation that compresses positions by the provided factor (commonly between 1.0 and 8.0).
     #[cfg(feature = "long-context")]
     PositionInterpolation { scale: f32 },
-}
-
-impl Default for RopeScaling {
-    fn default() -> Self {
-        RopeScaling::None
-    }
 }
 
 impl Default for RopeConfig {
