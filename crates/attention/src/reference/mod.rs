@@ -4,3 +4,5 @@
 //! baseline for validating optimized kernels.
 
 pub mod exact;
+
+pub use exact::ExactAttention;

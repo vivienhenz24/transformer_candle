@@ -53,6 +53,8 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "embedding",
+ "log",
+ "static_assertions",
 ]
 
 [[package]]

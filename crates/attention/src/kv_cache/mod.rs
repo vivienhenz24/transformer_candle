@@ -5,6 +5,11 @@
 
 pub mod api;
 pub mod layout;
+pub mod paged;
 
-pub use api::KeyValueCache;
+pub use api::{CacheStats, KeyValueCache};
 pub use layout::CacheLayout;
+pub use paged::{CacheConfig, PagedKeyValueCache};
+
+#[cfg(test)]
+mod tests;

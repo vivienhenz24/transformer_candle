@@ -47,7 +47,10 @@ fn causal_mask_handles_single_token_cases() -> Result<()> {
     assert_eq!(mask.flatten_all()?.to_vec1::<f32>()?, vec![0.0]);
 
     let mask = build_causal_mask(&device, 1, 1, 1, 4)?;
-    assert_eq!(mask.flatten_all()?.to_vec1::<f32>()?, vec![0.0, 0.0, 0.0, 0.0]);
+    assert_eq!(
+        mask.flatten_all()?.to_vec1::<f32>()?,
+        vec![0.0, 0.0, 0.0, 0.0]
+    );
 
     let mask = build_causal_mask(&device, 1, 1, 4, 2)?;
     let values = mask.flatten_all()?.to_vec1::<f32>()?;
