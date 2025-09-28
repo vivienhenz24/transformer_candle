@@ -443,10 +443,16 @@ impl Trainer {
                 if optimizer_steps % self.log_every == 0 || optimizer_steps <= 5 {
                     self.logger
                         .log_training_step(optimizer_steps, lr, &snapshot);
-                } else if optimizer_steps % 5 == 0 {
+                }
+                if optimizer_steps % 5 == 0 {
                     println!(
-                        "[training crate] step={} tokens={} loss={:.4} lr={:.5e}",
-                        optimizer_steps, tokens, snapshot.step_loss, lr
+                        "[progress] step {:>6} | seq {:>4} | tokens {:>6} | loss {:>8.4} | grad {:>7.4} | lr {:>9.3e}",
+                        optimizer_steps,
+                        seq_len,
+                        tokens,
+                        snapshot.step_loss,
+                        grad_norm,
+                        lr
                     );
                 }
             }
