@@ -37,6 +37,7 @@ impl TrainingConfig {
         let mut config: TrainingConfig = match path.extension().and_then(|ext| ext.to_str()) {
             Some("json") => serde_json::from_str(&contents)?,
             Some("toml") | Some("tml") | None => toml::from_str(&contents)?,
+            Some("yaml") | Some("yml") => serde_yaml::from_str(&contents)?,
             Some(other) => {
                 return Err(TrainingError::ConfigFormat(format!(
                     "unsupported configuration extension '{}'",
@@ -840,6 +841,12 @@ impl From<toml::de::Error> for TrainingError {
 
 impl From<serde_json::Error> for TrainingError {
     fn from(value: serde_json::Error) -> Self {
+        TrainingError::ConfigFormat(value.to_string())
+    }
+}
+
+impl From<serde_yaml::Error> for TrainingError {
+    fn from(value: serde_yaml::Error) -> Self {
         TrainingError::ConfigFormat(value.to_string())
     }
 }

@@ -300,6 +300,12 @@ impl From<toml::ser::Error> for PipelineError {
     }
 }
 
+impl From<serde_yaml::Error> for PipelineError {
+    fn from(value: serde_yaml::Error) -> Self {
+        PipelineError::Invalid(format!("failed to serialize config to yaml: {value}"))
+    }
+}
+
 impl From<ctrlc::Error> for PipelineError {
     fn from(value: ctrlc::Error) -> Self {
         PipelineError::CtrlC(value)
@@ -388,10 +394,19 @@ fn run() -> Result<()> {
         &tensorboard_dir,
     )?;
 
-    let config_path = run_dir.join("training.toml");
+    let config_toml_path = run_dir.join("training.toml");
     let config_toml = toml::to_string_pretty(&training_config)?;
-    fs::write(&config_path, config_toml)?;
-    println!("saved training config to {}", config_path.display());
+    fs::write(&config_toml_path, config_toml)?;
+
+    let config_yaml_path = run_dir.join("training.yaml");
+    let config_yaml = serde_yaml::to_string(&training_config)?;
+    fs::write(&config_yaml_path, config_yaml)?;
+
+    println!(
+        "saved training config to {} and {}",
+        config_toml_path.display(),
+        config_yaml_path.display()
+    );
     println!(
         "[orchestrator] training config assembled (model.layers={} hidden={} heads={})",
         training_config.model.num_layers.unwrap_or_default(),
