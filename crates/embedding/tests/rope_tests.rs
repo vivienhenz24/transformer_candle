@@ -52,7 +52,6 @@ fn naive_rope_rotate(
     out
 }
 
-
 fn tensor_to_flat_vec(t: &Tensor) -> Result<Vec<f32>> {
     Ok(t.flatten_all()?.to_vec1::<f32>()?)
 }

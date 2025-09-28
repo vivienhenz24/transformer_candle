@@ -1,0 +1,9 @@
+[package]
+name = "layers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
+thiserror = "1.0"

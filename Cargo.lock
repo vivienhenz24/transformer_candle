@@ -47,6 +47,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "attention"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "embedding",
+ "log",
+ "static_assertions",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -930,6 +941,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "layers"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1795,6 +1815,7 @@ dependencies = [
 name = "transformer"
 version = "0.1.0"
 dependencies = [
+ "attention",
  "candle-core",
  "candle-nn",
  "embedding",
