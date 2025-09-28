@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use candle_core::{Error, Result, Tensor};
+use candle_core::{DType, Error, Result, Tensor};
 
 use crate::{checks, dtypes::PrecisionPolicy};
 
@@ -82,7 +82,7 @@ fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) 
                     dims
                 )));
             }
-            checks::expect_batch_seq_hidden(tensor, dims[2])?;
+            checks::expect_batch_seq_hidden("dropout.input", tensor, dims[2])?;
             let device = tensor.device();
             let dtype = policy.compute();
             let total = tensor.elem_count();
@@ -92,7 +92,9 @@ fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) 
                 let sample = rng.next_f32();
                 mask_data.push(if sample < keep_prob { 1.0f32 } else { 0.0f32 });
             }
+            checks::ensure_cast_supported("dropout.mask", DType::F32, dtype)?;
             let mask = Tensor::from_vec(mask_data, dims.to_vec(), &device)?.to_dtype(dtype)?;
+            checks::ensure_cast_supported("dropout.scale", DType::F32, dtype)?;
             let scale = Tensor::full(1.0f32 / keep_prob, (), &device)?.to_dtype(dtype)?;
             let compute = policy.cast_for_matmul(tensor)?;
             let dropped = compute.broadcast_mul(&mask)?.broadcast_mul(&scale)?;
@@ -141,10 +143,15 @@ impl Residual {
         residual: &Tensor,
         policy: &PrecisionPolicy,
     ) -> Result<Tensor> {
-        checks::expect_batch_seq_hidden(residual, residual.dims()[2])?;
+        let expected = residual.dims();
+        checks::expect_batch_seq_hidden("residual.input", residual, expected[2])?;
+        checks::expect_shape("residual.branch", branch, expected)?;
+        checks::expect_same_dtype("residual.branch", branch, "residual.input", residual)?;
+
         let branch = policy.cast_for_matmul(branch)?;
         let residual = policy.cast_for_matmul(residual)?;
         let branch = if let Some(scale) = self.config.residual_scale {
+            checks::ensure_cast_supported("residual.scale", DType::F32, branch.dtype())?;
             let scale_tensor =
                 Tensor::full(scale, (), branch.device())?.to_dtype(branch.dtype())?;
             branch.broadcast_mul(&scale_tensor)?

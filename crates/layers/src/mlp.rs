@@ -166,13 +166,13 @@ impl FeedForwardLayer for FeedForward {
     }
 
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
-        checks::expect_batch_seq_hidden(hidden, self.config.hidden_size)?;
+        checks::expect_batch_seq_hidden("mlp.input", hidden, self.config.hidden_size)?;
         let up_out = self.up_proj.forward(hidden, policy)?;
 
         let activated = if self.config.gated {
             let compute = policy.cast_for_matmul(&up_out)?;
-            let rank = compute.rank();
-            let last = rank - 1;
+            checks::expect_rank("mlp.up", &compute, 3)?;
+            let last = compute.rank() - 1;
             let split = self.config.intermediate_size;
             let value = compute.narrow(last, 0, split)?;
             let gate = compute.narrow(last, split, split)?;

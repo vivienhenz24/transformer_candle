@@ -115,6 +115,7 @@ impl LinearInit {
         if dtype == DType::F32 {
             Ok(weight_f32)
         } else {
+            checks::ensure_cast_supported("linear.init", DType::F32, dtype)?;
             weight_f32.to_dtype(dtype)
         }
     }
@@ -191,6 +192,7 @@ impl Linear {
     pub fn copy_weight_from(&mut self, value: &Tensor) -> Result<()> {
         Self::validate_weight(&self.config, value)?;
         let mut weight = self.weight.lock().unwrap();
+        checks::expect_same_dtype("linear.weight", value, "linear.weight", &*weight)?;
         let cast = value.to_dtype(weight.dtype())?;
         *weight = cast;
         Ok(())
@@ -202,6 +204,7 @@ impl Linear {
             (Some(existing), input) => {
                 Self::validate_bias(&self.config, Some(input))?;
                 let mut bias = existing.lock().unwrap();
+                checks::expect_same_dtype("linear.bias", input, "linear.bias", &*bias)?;
                 let cast = input.to_dtype(bias.dtype())?;
                 *bias = cast;
                 Ok(())
@@ -211,31 +214,33 @@ impl Linear {
     }
 
     fn validate_weight(config: &LinearConfig, weight: &Tensor) -> Result<()> {
-        let dims = weight.dims();
-        if dims.len() != 2 || dims[0] != config.total_output_dim() || dims[1] != config.input_dim {
-            return Err(Error::Msg(format!(
-                "linear weight must have shape ({}, {}), got {:?}",
-                config.total_output_dim(),
-                config.input_dim,
-                dims
-            )));
-        }
+        checks::expect_rank("linear.weight", weight, 2)?;
+        checks::expect_shape(
+            "linear.weight",
+            weight,
+            &[config.total_output_dim(), config.input_dim],
+        )?;
+        checks::expect_dtype_in(
+            "linear.weight",
+            weight,
+            &[DType::F16, DType::BF16, DType::F32],
+        )?;
+        checks::expect_contiguous("linear.weight", weight)?;
         Ok(())
     }
 
     fn validate_bias(config: &LinearConfig, bias: Option<&Tensor>) -> Result<()> {
         match (config.bias, bias) {
             (true, Some(tensor)) => {
-                let dims = tensor.dims();
-                if dims.len() != 1 || dims[0] != config.total_output_dim() {
-                    Err(Error::Msg(format!(
-                        "linear bias must have shape ({}), got {:?}",
-                        config.total_output_dim(),
-                        dims
-                    )))
-                } else {
-                    Ok(())
-                }
+                checks::expect_rank("linear.bias", tensor, 1)?;
+                checks::expect_shape("linear.bias", tensor, &[config.total_output_dim()])?;
+                checks::expect_dtype_in(
+                    "linear.bias",
+                    tensor,
+                    &[DType::F16, DType::BF16, DType::F32],
+                )?;
+                checks::expect_contiguous("linear.bias", tensor)?;
+                Ok(())
             }
             (false, Some(_)) => Err(Error::Msg("bias provided but config disables bias".into())),
             (true, None) => Err(Error::Msg("config expects bias but none supplied".into())),
@@ -247,7 +252,7 @@ impl Linear {
         let dims = hidden.dims();
         match dims {
             [batch, seq, hidden_dim] => {
-                checks::expect_batch_seq_hidden(hidden, self.config.input_dim)?;
+                checks::expect_batch_seq_hidden("linear.input", hidden, self.config.input_dim)?;
                 if *hidden_dim != self.config.input_dim {
                     Err(Error::Msg(format!(
                         "expected last dim {} but received {}",

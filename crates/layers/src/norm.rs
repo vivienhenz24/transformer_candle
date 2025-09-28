@@ -84,7 +84,11 @@ impl NormImpl {
             checks::expect_dtype_in(
                 "norm.weight",
                 weight,
-                &[candle_core::DType::F16, candle_core::DType::BF16, candle_core::DType::F32],
+                &[
+                    candle_core::DType::F16,
+                    candle_core::DType::BF16,
+                    candle_core::DType::F32,
+                ],
             )?;
             checks::expect_contiguous("norm.weight", weight)?;
         }
@@ -93,7 +97,11 @@ impl NormImpl {
             checks::expect_dtype_in(
                 "norm.bias",
                 bias,
-                &[candle_core::DType::F16, candle_core::DType::BF16, candle_core::DType::F32],
+                &[
+                    candle_core::DType::F16,
+                    candle_core::DType::BF16,
+                    candle_core::DType::F32,
+                ],
             )?;
             checks::expect_contiguous("norm.bias", bias)?;
         }
@@ -125,14 +133,17 @@ impl NormImpl {
         let mut normalized = compute.broadcast_div(&denom)?;
 
         if normalized.dtype() != policy.compute() {
+            checks::ensure_cast_supported("norm.output", normalized.dtype(), policy.compute())?;
             normalized = normalized.to_dtype(policy.compute())?;
         }
 
         if let Some(weight) = &self.weight {
+            checks::ensure_cast_supported("norm.weight", weight.dtype(), normalized.dtype())?;
             let weight = weight.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_mul(&weight)?;
         }
         if let Some(bias) = &self.bias {
+            checks::ensure_cast_supported("norm.bias", bias.dtype(), normalized.dtype())?;
             let bias = bias.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_add(&bias)?;
         }
