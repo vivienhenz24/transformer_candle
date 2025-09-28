@@ -12,6 +12,12 @@ use candle_core::{
 };
 use model::Model;
 use pretraining_data::corpora::StreamingCorpus;
+use rand::{
+    distributions::{Distribution, WeightedIndex},
+    rngs::StdRng,
+    SeedableRng,
+};
+use std::cmp::Ordering;
 use tokenizer::{
     build_from_artifacts as build_bbpe_tokenizer, ArtifactsCfg as BbpeArtifactsCfg,
     ByteLevelCfg as BbpeByteLevelCfg, Config as BbpeConfig, ModelCfg as BbpeModelCfg,
@@ -30,6 +36,13 @@ use crate::{
     scheduler::{LRScheduler, SchedulerConfig},
     TrainingConfig, TrainingError,
 };
+
+const PREVIEW_PROMPT_TOKENS: usize = 64;
+const PREVIEW_NEW_TOKENS: usize = 200;
+const PREVIEW_TEMPERATURE: f32 = 0.8;
+const PREVIEW_TOP_K: usize = 40;
+const PREVIEW_TOP_P: f32 = 0.9;
+const PREVIEW_REPETITION_PENALTY: f32 = 1.1;
 
 pub struct Trainer {
     config: TrainingConfig,
@@ -389,11 +402,7 @@ impl Trainer {
                 continue;
             };
 
-            let (mut found_inf, grad_norm) = if self.gradient_scaler.is_enabled() {
-                self.unscale_gradients(grads)?
-            } else {
-                (false, 0.0)
-            };
+            let (mut found_inf, grad_norm) = self.unscale_gradients(grads)?;
 
             if let Some(avg_loss) = step_metrics.average_loss() {
                 if !avg_loss.is_finite() {
@@ -427,9 +436,20 @@ impl Trainer {
             if let Some(avg_loss) = step_metrics.average_loss() {
                 let tokens = step_metrics.tokens() as u64;
                 let snapshot = self.metrics.record_step(tokens, avg_loss, grad_norm);
-                if optimizer_steps % self.log_every == 0 {
+                if optimizer_steps % self.log_every == 0 || optimizer_steps <= 5 {
                     self.logger
                         .log_training_step(optimizer_steps, lr, &snapshot);
+                }
+                if optimizer_steps % 5 == 0 {
+                    println!(
+                        "[progress] step {:>6} | seq {:>4} | tokens {:>6} | loss {:>8.4} | grad {:>7.4} | lr {:>9.3e}",
+                        optimizer_steps,
+                        seq_len,
+                        tokens,
+                        snapshot.step_loss,
+                        grad_norm,
+                        lr
+                    );
                 }
             }
 
@@ -549,7 +569,7 @@ impl Trainer {
             optimizer_steps,
             descriptor.directory.display()
         );
-        if let Some(sample) = self.sample_model_output(batch, 16, 16) {
+        if let Some(sample) = self.sample_model_output(batch) {
             println!("[training crate] model sample: {}", sample);
         }
 
@@ -749,12 +769,7 @@ impl Trainer {
         Ok(())
     }
 
-    fn sample_model_output(
-        &self,
-        batch: &DataBatch,
-        max_prompt_tokens: usize,
-        max_new_tokens: usize,
-    ) -> Option<String> {
+    fn sample_model_output(&self, batch: &DataBatch) -> Option<String> {
         let first_seq = batch.input_ids.narrow(0, 0, 1).ok()?;
         let ids_2d = first_seq.to_vec2::<u32>().ok()?;
         let tokens = ids_2d.into_iter().next()?;
@@ -762,7 +777,7 @@ impl Trainer {
             return None;
         }
 
-        let prompt_len = tokens.len().min(max_prompt_tokens.max(1));
+        let prompt_len = tokens.len().min(PREVIEW_PROMPT_TOKENS.max(1));
         let mut prompt_ids: Vec<u32> = tokens.iter().copied().take(prompt_len).collect();
         if prompt_ids.is_empty() {
             prompt_ids.push(*tokens.first()?);
@@ -771,16 +786,25 @@ impl Trainer {
         let mut context = prompt_ids.clone();
         let mut generated: Vec<u32> = Vec::new();
 
-        for _ in 0..max_new_tokens {
+        let mut rng = StdRng::seed_from_u64(
+            self.config.runtime.seed
+                ^ (self.progress.optimizer_step as u64)
+                ^ (batch.global_step as u64),
+        );
+
+        for _ in 0..PREVIEW_NEW_TOKENS {
             if context.is_empty() {
                 break;
             }
 
-            let input = Tensor::from_slice(&context, (1, context.len()), &self.device)
-                .ok()?
-                .contiguous()
-                .ok()?;
-            let logits = self.model.forward(&input).ok()?;
+            let input = match Tensor::from_slice(&context, (1, context.len()), &self.device) {
+                Ok(t) => t,
+                Err(_) => break,
+            };
+            let logits = match self.model.forward(&input) {
+                Ok(t) => t,
+                Err(_) => break,
+            };
             let dims = logits.dims();
             if dims.len() != 3 {
                 break;
@@ -790,22 +814,31 @@ impl Trainer {
                 break;
             }
 
-            let last = logits.i((0, seq_len - 1)).ok()?;
-            let scores = last.to_vec1::<f32>().ok()?;
+            let last = match logits.i((0, seq_len - 1)) {
+                Ok(t) => t,
+                Err(_) => break,
+            };
+            let scores = match last.to_vec1::<f32>() {
+                Ok(v) => v,
+                Err(_) => break,
+            };
             if scores.is_empty() {
                 break;
             }
 
-            let mut best_idx = 0usize;
-            let mut best_val = f32::NEG_INFINITY;
-            for (idx, &score) in scores.iter().enumerate() {
-                if score > best_val {
-                    best_val = score;
-                    best_idx = idx;
-                }
-            }
+            let next_id = match sample_next_token(
+                &scores,
+                PREVIEW_TEMPERATURE,
+                PREVIEW_TOP_K,
+                PREVIEW_TOP_P,
+                PREVIEW_REPETITION_PENALTY,
+                &context,
+                &mut rng,
+            ) {
+                Some(id) => id,
+                None => break,
+            };
 
-            let next_id = best_idx as u32;
             if self.pad_token_id == Some(next_id) {
                 break;
             }
@@ -828,6 +861,107 @@ impl Trainer {
             prompt_text, generated_text
         ))
     }
+}
+
+fn sample_next_token<R: rand::Rng + ?Sized>(
+    logits: &[f32],
+    temperature: f32,
+    top_k: usize,
+    top_p: f32,
+    repetition_penalty: f32,
+    history: &[u32],
+    rng: &mut R,
+) -> Option<u32> {
+    if logits.is_empty() {
+        return None;
+    }
+
+    let mut adjusted = logits.to_vec();
+
+    if repetition_penalty > 1.0 {
+        for &token in history.iter() {
+            let idx = token as usize;
+            if idx >= adjusted.len() {
+                continue;
+            }
+            let logit = &mut adjusted[idx];
+            if *logit > 0.0 {
+                *logit /= repetition_penalty;
+            } else {
+                *logit *= repetition_penalty;
+            }
+        }
+    }
+
+    let temp = temperature.max(1e-4);
+    let inv_temp = 1.0 / temp;
+    for val in adjusted.iter_mut() {
+        *val *= inv_temp;
+    }
+
+    let max_val = adjusted.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let mut probs: Vec<f32> = adjusted
+        .iter()
+        .map(|logit| (logit - max_val).exp())
+        .collect();
+
+    if !probs.iter().all(|p| p.is_finite()) {
+        return None;
+    }
+
+    // Top-k filtering
+    if top_k > 0 && top_k < probs.len() {
+        let mut indices: Vec<usize> = (0..probs.len()).collect();
+        indices
+            .sort_unstable_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap_or(Ordering::Equal));
+        for &idx in indices.iter().skip(top_k) {
+            probs[idx] = 0.0;
+        }
+    }
+
+    // Top-p (nucleus) filtering
+    if top_p > 0.0 && top_p < 1.0 {
+        let mut pairs: Vec<(usize, f32)> = probs
+            .iter()
+            .enumerate()
+            .map(|(idx, prob)| (idx, *prob))
+            .collect();
+        pairs.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        let mut cumulative = 0.0f32;
+        let mut keep = vec![false; probs.len()];
+        for (idx, prob) in pairs {
+            cumulative += prob;
+            keep[idx] = true;
+            if cumulative >= top_p {
+                break;
+            }
+        }
+        for (idx, keep_flag) in keep.iter().enumerate() {
+            if !*keep_flag {
+                probs[idx] = 0.0;
+            }
+        }
+    }
+
+    let sum: f32 = probs.iter().sum();
+    if !sum.is_finite() || sum <= 0.0 {
+        if let Some((idx, _)) = adjusted
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(Ordering::Equal))
+        {
+            return Some(idx as u32);
+        }
+        return None;
+    }
+
+    for prob in probs.iter_mut() {
+        *prob /= sum;
+    }
+
+    let dist = WeightedIndex::new(&probs).ok()?;
+    let sampled = dist.sample(rng);
+    Some(sampled as u32)
 }
 
 fn load_tokenizer(cfg: &TrainingTokenizerConfig) -> Result<Tokenizer, TrainingError> {
@@ -1160,6 +1294,11 @@ struct StepMetrics {
 
 impl StepMetrics {
     fn accumulate(&mut self, metrics: &LossMetrics) {
+        println!(
+            "[debug] step_metrics accumulate average_loss={:.6} total_tokens={}",
+            metrics.average_loss(),
+            metrics.total_tokens()
+        );
         self.loss_sum += metrics.average_loss() as f64 * metrics.total_tokens() as f64;
         self.tokens += metrics.total_tokens();
         self.correct += metrics.correct_tokens();
