@@ -16,16 +16,16 @@ model:
 # Tokenizer artifacts produced by the tokenizer crate or orchestrator CLI
 # Update the paths to match your environment.
 tokenizer:
-  tokenizer_json: "runs/local-smoke/tokenizer/tokenizer.json"
+  tokenizer_json: "../runs/local-smoke/tokenizer/tokenizer.json"
   vocab: null
   merges: null
-  special_tokens: "runs/local-smoke/special_tokens.txt"
+  special_tokens: "../runs/local-smoke/special_tokens.txt"
 
 data:
   train_shards:
-    - "crates/pretraining-data/input.txt"
+    - "../crates/pretraining-data/input.txt"
   validation_shards:
-    - "crates/pretraining-data/input.txt"
+    - "../crates/pretraining-data/input.txt"
   batch_size: 4
   gradient_accumulation_steps: 1
   shuffle_buffer_size: 2048
@@ -52,7 +52,7 @@ runtime:
   precision: fp32
   log_every_n_steps: 1
   checkpoint:
-    directory: "runs/local-smoke/checkpoints"
+    directory: "../runs/local-smoke/checkpoints"
     every_n_steps: 50
     every_n_epochs: null
     max_keep: 2
@@ -61,9 +61,9 @@ runtime:
     every_n_epochs: null
     max_batches: 1
     best:
-      directory: "runs/local-smoke/best"
+      directory: "../runs/local-smoke/best"
       max_keep: 1
   logging:
     enable_stdout: true
-    tensorboard: "runs/local-smoke/tensorboard"
+    tensorboard: "../runs/local-smoke/tensorboard"
     tensorboard_flush_every_n: 10
