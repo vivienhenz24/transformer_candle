@@ -5,7 +5,9 @@
 //! expected to promote intermediate statistics (mean, variance) to
 //! [`PrecisionPolicy::reduction`] before casting the output back.
 
-use candle_core::{Error, Result, Tensor, D};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use candle_core::{Error, Result, Tensor, Var, D};
 
 use crate::{checks, dtypes::PrecisionPolicy};
 
@@ -51,14 +53,20 @@ pub trait NormalizationLayer: Send + Sync {
 
     /// Applies the normalisation to a hidden state tensor.
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor>;
+
+    /// Exposes trainable parameters for optimisation with an optional scope prefix.
+    fn named_parameters(&self, scope: &str) -> Vec<(String, Var)>;
 }
 
 #[derive(Debug, Clone)]
 struct NormImpl {
     config: NormConfig,
-    weight: Option<Tensor>,
-    bias: Option<Tensor>,
+    weight: Option<Var>,
+    bias: Option<Var>,
+    instance_id: usize,
 }
+
+static NORM_INSTANCE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl NormImpl {
     fn new(config: NormConfig, weight: Option<Tensor>, bias: Option<Tensor>) -> Result<Self> {
@@ -79,7 +87,7 @@ impl NormImpl {
             ));
         }
 
-        if let Some(weight) = &weight {
+        if let Some(weight) = weight.as_ref() {
             checks::expect_shape("norm.weight", weight, &[config.hidden_size])?;
             checks::expect_dtype_in(
                 "norm.weight",
@@ -92,7 +100,7 @@ impl NormImpl {
             )?;
             checks::expect_contiguous("norm.weight", weight)?;
         }
-        if let Some(bias) = &bias {
+        if let Some(bias) = bias.as_ref() {
             checks::expect_shape("norm.bias", bias, &[config.hidden_size])?;
             checks::expect_dtype_in(
                 "norm.bias",
@@ -106,15 +114,53 @@ impl NormImpl {
             checks::expect_contiguous("norm.bias", bias)?;
         }
 
+        let weight = match weight {
+            Some(tensor) => Some(Var::from_tensor(&tensor)?),
+            None => None,
+        };
+        let bias = match bias {
+            Some(tensor) => Some(Var::from_tensor(&tensor)?),
+            None => None,
+        };
+        let instance_id = NORM_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
+
         Ok(Self {
             config,
             weight,
             bias,
+            instance_id,
         })
     }
 
     fn config(&self) -> &NormConfig {
         &self.config
+    }
+
+    fn scope_name(&self) -> &'static str {
+        match self.config.kind {
+            NormKind::LayerNorm => "layer_norm",
+            NormKind::RmsNorm => "rms_norm",
+        }
+    }
+
+    fn scoped_prefix(&self, scope: &str) -> String {
+        if scope.is_empty() {
+            format!("{}_{}", self.scope_name(), self.instance_id)
+        } else {
+            scope.to_string()
+        }
+    }
+
+    fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        let mut params = Vec::new();
+        let prefix = self.scoped_prefix(scope);
+        if let Some(weight) = &self.weight {
+            params.push((format!("{}.weight", &prefix), weight.clone()));
+        }
+        if let Some(bias) = &self.bias {
+            params.push((format!("{}.bias", &prefix), bias.clone()));
+        }
+        params
     }
 
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
@@ -138,11 +184,13 @@ impl NormImpl {
         }
 
         if let Some(weight) = &self.weight {
+            let weight = weight.as_tensor();
             checks::ensure_cast_supported("norm.weight", weight.dtype(), normalized.dtype())?;
             let weight = weight.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_mul(&weight)?;
         }
         if let Some(bias) = &self.bias {
+            let bias = bias.as_tensor();
             checks::ensure_cast_supported("norm.bias", bias.dtype(), normalized.dtype())?;
             let bias = bias.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_add(&bias)?;
@@ -185,6 +233,11 @@ impl LayerNorm {
             inner: NormImpl::new(config, None, None)?,
         })
     }
+
+    /// Returns any trainable parameters with an optional scope prefix.
+    pub fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        self.inner.named_parameters(scope)
+    }
 }
 
 impl NormalizationLayer for LayerNorm {
@@ -194,6 +247,10 @@ impl NormalizationLayer for LayerNorm {
 
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
         self.inner.forward(hidden, policy)
+    }
+
+    fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        self.inner.named_parameters(scope)
     }
 }
 
@@ -221,6 +278,11 @@ impl RmsNorm {
             inner: NormImpl::new(config, None, None)?,
         })
     }
+
+    /// Returns any trainable parameters with an optional scope prefix.
+    pub fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        self.inner.named_parameters(scope)
+    }
 }
 
 impl NormalizationLayer for RmsNorm {
@@ -230,6 +292,10 @@ impl NormalizationLayer for RmsNorm {
 
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
         self.inner.forward(hidden, policy)
+    }
+
+    fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        self.inner.named_parameters(scope)
     }
 }
 

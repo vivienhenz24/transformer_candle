@@ -4,7 +4,7 @@ use std::sync::Arc;
 use attention::core::{Config as AttentionConfig, RopeMode};
 use attention::reference::ExactAttention;
 use attention::Attention;
-use candle_core::{bail, Error, Result, Tensor};
+use candle_core::{bail, Error, Result, Tensor, Var};
 use embedding::positional::rope::{Rope, RopeConfig};
 use layers::{
     activations::ActivationKind,
@@ -53,9 +53,9 @@ pub struct DecoderBlock {
     policy: PrecisionPolicy,
     norm_attn: Arc<dyn NormalizationLayer>,
     norm_mlp: Arc<dyn NormalizationLayer>,
-    qkv_proj: Linear,
-    out_proj: Linear,
-    mlp: FeedForward,
+    qkv_proj: Arc<Linear>,
+    out_proj: Arc<Linear>,
+    mlp: Arc<FeedForward>,
     attention: ExactAttention,
     attention_config: AttentionConfig,
     residual_attn: Residual,
@@ -100,21 +100,21 @@ impl DecoderBlock {
         let mut qkv_config = LinearConfig::new(model_cfg.hidden_dim, model_cfg.hidden_dim);
         qkv_config.bias = true;
         qkv_config.fused_projections = 3;
-        let qkv_proj = Linear::with_init(
+        let qkv_proj = Arc::new(Linear::with_init(
             qkv_config,
             &LinearInit::XavierUniform,
             &model_cfg.device,
             model_cfg.dtype,
-        )?;
+        )?);
 
         let mut out_config = LinearConfig::new(model_cfg.hidden_dim, model_cfg.hidden_dim);
         out_config.bias = true;
-        let out_proj = Linear::with_init(
+        let out_proj = Arc::new(Linear::with_init(
             out_config,
             &LinearInit::XavierUniform,
             &model_cfg.device,
             model_cfg.dtype,
-        )?;
+        )?);
 
         let activation = ActivationKind::Silu;
         let ff_config = FeedForwardConfig::with_expansion_ratio(
@@ -122,14 +122,14 @@ impl DecoderBlock {
             model_cfg.ff_ratio,
             activation,
         );
-        let mlp = FeedForward::with_init(
+        let mlp = Arc::new(FeedForward::with_init(
             ff_config,
             activation,
             &LinearInit::XavierUniform,
             &LinearInit::XavierUniform,
             &model_cfg.device,
             model_cfg.dtype,
-        )?;
+        )?);
 
         let mut residual_cfg = ResidualConfig::new(true);
         residual_cfg.dropout_p = model_cfg.residual_dropout_p;
@@ -210,6 +210,55 @@ impl DecoderBlock {
         let permuted = tensor.permute((0, 2, 1, 3))?;
         let contiguous = permuted.contiguous()?;
         contiguous.reshape((batch, seq, self.hidden_dim))
+    }
+
+    /// Returns the trainable parameters for this block with an optional scope prefix.
+    pub fn parameters(&self, prefix: &str) -> Vec<(String, Var)> {
+        fn join(prefix: &str, name: &str) -> String {
+            if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}.{}", prefix, name)
+            }
+        }
+
+        fn sanitize_linear_scope(name: &str) -> String {
+            let mut segments: Vec<&str> = name.split('.').collect();
+            if segments.len() < 2 {
+                return name.to_string();
+            }
+            let suffix = segments.pop().unwrap();
+            if let Some(last) = segments.last() {
+                if last.starts_with("linear_") {
+                    segments.pop();
+                }
+            }
+            segments.push(suffix);
+            segments.join(".")
+        }
+
+        let mut params = Vec::new();
+        params.extend(self.norm_attn.named_parameters(&join(prefix, "norm_attn")));
+        params.extend(self.norm_mlp.named_parameters(&join(prefix, "norm_mlp")));
+        params.extend(
+            self.qkv_proj
+                .named_parameters_with_scope(&join(prefix, "qkv")),
+        );
+        params.extend(
+            self.out_proj
+                .named_parameters_with_scope(&join(prefix, "out_proj")),
+        );
+        params.extend(self.mlp.named_parameters(&join(prefix, "mlp")));
+
+        params
+            .into_iter()
+            .map(|(name, var)| (sanitize_linear_scope(&name), var))
+            .collect()
+    }
+
+    /// Legacy shim preserved for external callers.
+    pub fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        self.parameters(scope)
     }
 
     /// Forward pass through the decoder block.

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use attention::core::{Config as AttentionConfig, RopeMode};
 use attention::masks::build_causal_mask;
-use candle_core::{Error, Result, Tensor};
+use candle_core::{DType, Error, Result, Tensor, Var};
 use embedding::token::{TokenEmbedding, TokenEmbeddingConfig};
 use layers::{dtypes::PrecisionPolicy, norm::NormalizationLayer};
 
@@ -10,6 +10,15 @@ use crate::{
     block::{build_norm, DecoderBlock},
     config::ModelConfig,
 };
+
+/// Overrides applied on top of a base [`ModelConfig`].
+#[derive(Debug, Clone, Default)]
+pub struct ModelConfigOverrides {
+    pub attn_dropout_p: Option<Option<f32>>,
+    pub residual_dropout_p: Option<Option<f32>>,
+    pub dtype: Option<DType>,
+    pub rope_mode: Option<RopeMode>,
+}
 
 /// Decoder-only transformer assembled from the shared crates.
 pub struct Model {
@@ -97,6 +106,23 @@ impl Model {
         let normalized = self.final_norm.forward(&hidden, &self.policy)?;
         self.embedding.linear_out(&normalized)
     }
+
+    /// Returns the trainable parameters for the model.
+    pub fn parameters(&self) -> Vec<(String, Var)> {
+        let mut params = Vec::new();
+        params.extend(self.embedding.named_parameters("embedding"));
+        for (idx, block) in self.blocks.iter().enumerate() {
+            let scope = format!("blocks.{}", idx);
+            params.extend(block.parameters(&scope));
+        }
+        params.extend(self.final_norm.named_parameters("final_norm"));
+        params
+    }
+
+    /// Legacy accessor preserved for downstream crates.
+    pub fn named_parameters(&self) -> Vec<(String, Var)> {
+        self.parameters()
+    }
 }
 
 fn build_positions(seq_len: usize) -> Result<Tensor> {
@@ -105,4 +131,25 @@ fn build_positions(seq_len: usize) -> Result<Tensor> {
     }
     let data: Vec<u32> = (0..seq_len).map(|idx| idx as u32).collect();
     Tensor::from_vec(data, seq_len, &candle_core::Device::Cpu)
+}
+
+/// Compose a [`ModelConfig`] from a base configuration and override hints.
+pub fn build_model_config_with_overrides(
+    mut base: ModelConfig,
+    overrides: ModelConfigOverrides,
+) -> Result<ModelConfig> {
+    if let Some(attn_dropout) = overrides.attn_dropout_p {
+        base.attn_dropout_p = attn_dropout;
+    }
+    if let Some(residual_dropout) = overrides.residual_dropout_p {
+        base.residual_dropout_p = residual_dropout;
+    }
+    if let Some(dtype) = overrides.dtype {
+        base.dtype = dtype;
+    }
+    if let Some(mode) = overrides.rope_mode {
+        base.rope_mode = mode;
+    }
+    base.validate()?;
+    Ok(base)
 }

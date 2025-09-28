@@ -87,6 +87,16 @@ impl TokenEmbedding {
         gathered.reshape(output_dims)
     }
 
+    /// Returns the trainable parameters for this embedding with an optional scope prefix.
+    pub fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        let prefix = if scope.is_empty() {
+            "embedding".to_string()
+        } else {
+            scope.to_string()
+        };
+        vec![(format!("{}.weight", prefix), self.weight.clone())]
+    }
+
     /// Applies a tied linear projection using the transpose of the embedding weight.
     pub fn linear_out(&self, hidden: &Tensor) -> Result<Tensor> {
         let dims = hidden.dims();
