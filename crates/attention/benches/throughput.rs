@@ -11,7 +11,7 @@ use attention::core::{BackendSelection, Config};
 use attention::masks::build_causal_mask;
 use attention::reference::ExactAttention;
 use attention::Attention;
-use candle_core::{Device, DType, Tensor};
+use candle_core::{DType, Device, Tensor};
 use util::{format_markdown_table, update_results};
 
 #[cfg(feature = "fused")]
@@ -93,8 +93,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 backend: BackendSelection::FusedOnly,
                 ..Config::default()
             };
-            let tokens_sec =
-                measure(&mut fused, &config_fused, &q, &k, &v, &mask, iterations)?;
+            let tokens_sec = measure(&mut fused, &config_fused, &q, &k, &v, &mask, iterations)?;
             rows.push(vec![
                 "fused".to_string(),
                 describe_case(&case),

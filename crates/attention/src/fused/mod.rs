@@ -460,11 +460,11 @@ impl MulScalarExt for Tensor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_nn::ops::softmax_last_dim;
     use crate::core::{BackendSelection, Config};
     use crate::masks::build_causal_mask;
     use crate::reference::ExactAttention;
     use candle_core::{DType, Device};
+    use candle_nn::ops::softmax_last_dim;
 
     fn compute_reference(
         q: &Tensor,

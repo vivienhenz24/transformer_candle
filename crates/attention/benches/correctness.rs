@@ -18,7 +18,7 @@ use attention::reference::ExactAttention;
 #[cfg(feature = "fused")]
 use attention::Attention;
 #[cfg(feature = "fused")]
-use candle_core::{Device, DType, Tensor};
+use candle_core::{DType, Device, Tensor};
 
 fn main() {
     if let Err(err) = run() {
@@ -67,8 +67,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         ..Config::default()
                     };
 
-                    let reference_out =
-                        reference.attend(&q, &k, &v, Some(&mask), &config_ref)?;
+                    let reference_out = reference.attend(&q, &k, &v, Some(&mask), &config_ref)?;
                     let fused_out = fused.attend(&q, &k, &v, Some(&mask), &config_fused)?;
 
                     let reference_f32 = reference_out.to_dtype(DType::F32)?;

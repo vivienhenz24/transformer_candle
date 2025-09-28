@@ -51,7 +51,12 @@ impl CacheConfig {
         };
         log::info!(
             "kv-cache init: batch={} layers={} heads={} head_dim={} page_size={} dtype={:?}",
-            cfg.batch, cfg.layers, cfg.heads, cfg.head_dim, cfg.page_size, cfg.dtype
+            cfg.batch,
+            cfg.layers,
+            cfg.heads,
+            cfg.head_dim,
+            cfg.page_size,
+            cfg.dtype
         );
         Ok(cfg)
     }

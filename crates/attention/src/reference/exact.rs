@@ -120,9 +120,10 @@ impl Attention for ExactAttention {
             });
         }
 
-        let (batch, heads, q_len, head_dim) = q.dims4().map_err(|_| AttentionError::InvalidShape {
-            context: "q must have shape [batch, heads, seq_len, head_dim]".to_string(),
-        })?;
+        let (batch, heads, q_len, head_dim) =
+            q.dims4().map_err(|_| AttentionError::InvalidShape {
+                context: "q must have shape [batch, heads, seq_len, head_dim]".to_string(),
+            })?;
         let (kb, kh, k_len, kd) = k.dims4().map_err(|_| AttentionError::InvalidShape {
             context: "k must have shape [batch, heads, seq_len, head_dim]".to_string(),
         })?;
@@ -164,11 +165,12 @@ impl Attention for ExactAttention {
                     *guard = Some((kind.clone(), RopeAdapter::new(rcfg.clone(), device.clone())));
                 }
                 if let Some((_, adapter)) = guard.as_mut() {
-                    let (q_rot, k_rot) = adapter
-                        .apply(q, k, 0)
-                        .map_err(|err| AttentionError::Backend {
-                            message: err.to_string(),
-                        })?;
+                    let (q_rot, k_rot) =
+                        adapter
+                            .apply(q, k, 0)
+                            .map_err(|err| AttentionError::Backend {
+                                message: err.to_string(),
+                            })?;
                     q_tensor = q_rot;
                     k_tensor = k_rot;
                 }
@@ -187,24 +189,27 @@ impl Attention for ExactAttention {
                     .map_err(|e| AttentionError::Backend {
                         message: e.to_string(),
                     })?,
-                v.to_dtype(DType::F32).map_err(|e| AttentionError::Backend {
-                    message: e.to_string(),
-                })?,
+                v.to_dtype(DType::F32)
+                    .map_err(|e| AttentionError::Backend {
+                        message: e.to_string(),
+                    })?,
             ),
             PrecisionPolicy::Inherit => (q_tensor.clone(), k_tensor.clone(), v.clone()),
         };
 
         let merged = batch * heads;
-        let q_view = q_work
-            .reshape((merged, q_len, head_dim))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
-        let k_view = k_work
-            .reshape((merged, k_len, head_dim))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
+        let q_view =
+            q_work
+                .reshape((merged, q_len, head_dim))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
+        let k_view =
+            k_work
+                .reshape((merged, k_len, head_dim))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
         let k_t = k_view
             .transpose(1, 2)
             .map_err(|e| AttentionError::Backend {
@@ -219,11 +224,12 @@ impl Attention for ExactAttention {
             .map_err(|e| AttentionError::Backend {
                 message: e.to_string(),
             })?;
-        let mut scores = scores
-            .reshape((batch, heads, q_len, k_len))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
+        let mut scores =
+            scores
+                .reshape((batch, heads, q_len, k_len))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
 
         if cfg.use_padding_mask {
             if let Some(mask) = mask {
@@ -234,7 +240,10 @@ impl Attention for ExactAttention {
                 }
                 if mask.dtype() != MASK_DTYPE {
                     return Err(AttentionError::UnsupportedDType {
-                        requested: format!("mask expects dtype {MASK_DTYPE:?}, got {:?}", mask.dtype()),
+                        requested: format!(
+                            "mask expects dtype {MASK_DTYPE:?}, got {:?}",
+                            mask.dtype()
+                        ),
                     });
                 }
                 let (mb, mh, mq, mk) = mask.dims4().map_err(|_| AttentionError::InvalidShape {
@@ -255,8 +264,7 @@ impl Attention for ExactAttention {
                 let mask_applied = if mh == heads {
                     mask.clone()
                 } else {
-                    mask
-                        .broadcast_as((batch, heads, q_len, k_len))
+                    mask.broadcast_as((batch, heads, q_len, k_len))
                         .map_err(|e| AttentionError::Backend {
                             message: e.to_string(),
                         })?
@@ -269,19 +277,21 @@ impl Attention for ExactAttention {
             }
         }
 
-        let scores_2d = scores
-            .reshape((merged, q_len, k_len))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
+        let scores_2d =
+            scores
+                .reshape((merged, q_len, k_len))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
         let probs = softmax_last_dim(&scores_2d).map_err(|e| AttentionError::Backend {
             message: e.to_string(),
         })?;
-        let probs = probs
-            .reshape((batch, heads, q_len, k_len))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
+        let probs =
+            probs
+                .reshape((batch, heads, q_len, k_len))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
 
         let probs = if let Some(dropout_p) = cfg.dropout_p {
             if dropout_p < 0.0 || dropout_p >= 1.0 {
@@ -300,16 +310,18 @@ impl Attention for ExactAttention {
             probs
         };
 
-        let probs_2d = probs
-            .reshape((merged, q_len, k_len))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
-        let v_view = v_work
-            .reshape((merged, k_len, head_dim))
-            .map_err(|e| AttentionError::Backend {
-                message: e.to_string(),
-            })?;
+        let probs_2d =
+            probs
+                .reshape((merged, q_len, k_len))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
+        let v_view =
+            v_work
+                .reshape((merged, k_len, head_dim))
+                .map_err(|e| AttentionError::Backend {
+                    message: e.to_string(),
+                })?;
         let output = probs_2d
             .matmul(&v_view)
             .map_err(|e| AttentionError::Backend {

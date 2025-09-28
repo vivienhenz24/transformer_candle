@@ -5,7 +5,13 @@ pub fn format_markdown_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     table.push_str("| ");
     table.push_str(&headers.join(" | "));
     table.push_str(" |\n| ");
-    table.push_str(&headers.iter().map(|_| "---").collect::<Vec<_>>().join(" | "));
+    table.push_str(
+        &headers
+            .iter()
+            .map(|_| "---")
+            .collect::<Vec<_>>()
+            .join(" | "),
+    );
     table.push_str(" |\n");
     for row in rows {
         table.push_str("| ");
@@ -39,10 +45,7 @@ pub fn update_results(section: &str, content: &str) -> std::io::Result<()> {
         end = end_marker
     );
 
-    if let (Some(start_idx), Some(end_idx)) = (
-        body.find(&start_marker),
-        body.find(&end_marker),
-    ) {
+    if let (Some(start_idx), Some(end_idx)) = (body.find(&start_marker), body.find(&end_marker)) {
         let end_bound = end_idx + end_marker.len();
         body.replace_range(start_idx..end_bound, &section_block);
     } else {

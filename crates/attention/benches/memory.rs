@@ -11,7 +11,7 @@ use attention::core::{BackendSelection, Config};
 use attention::masks::build_causal_mask;
 use attention::reference::ExactAttention;
 use attention::Attention;
-use candle_core::{Device, DType, Tensor};
+use candle_core::{DType, Device, Tensor};
 use util::{format_markdown_table, update_results};
 
 #[cfg(feature = "fused")]
@@ -97,7 +97,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let table = format_markdown_table(
-        &["backend", "shape", "dtype", "tokens/sec", "peak MB", "steady MB"],
+        &[
+            "backend",
+            "shape",
+            "dtype",
+            "tokens/sec",
+            "peak MB",
+            "steady MB",
+        ],
         &rows,
     );
 
