@@ -549,7 +549,7 @@ impl Trainer {
             optimizer_steps,
             descriptor.directory.display()
         );
-        if let Some(sample) = self.sample_model_output(batch, 16, 16) {
+        if let Some(sample) = self.sample_model_output(batch, 64, 200) {
             println!("[training crate] model sample: {}", sample);
         }
 
