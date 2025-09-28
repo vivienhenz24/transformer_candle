@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use candle_core::{backprop::GradStore, DType, Device, Tensor, Var};
+pub mod scaler;
+
+pub use scaler::{GradientScaler, LossScaleConfig};
+
+use candle_core::{backprop::GradStore, DType, Tensor, Var};
 use serde::{Deserialize, Serialize};
 
 use crate::{config, TrainingError};
@@ -21,18 +25,22 @@ pub struct AdamWConfig {
     pub weight_decay: f64,
 }
 
-impl From<&config::OptimizerConfig> for OptimizerConfig {
-    fn from(value: &config::OptimizerConfig) -> Self {
+impl TryFrom<&config::OptimizerConfig> for OptimizerConfig {
+    type Error = TrainingError;
+
+    fn try_from(value: &config::OptimizerConfig) -> Result<Self, Self::Error> {
         match value.algorithm {
-            config::OptimizerType::AdamW | config::OptimizerType::Adam | config::OptimizerType::Sgd => {
-                OptimizerConfig::AdamW(AdamWConfig {
-                    learning_rate: value.learning_rate as f64,
-                    beta1: value.beta1 as f64,
-                    beta2: value.beta2 as f64,
-                    epsilon: value.epsilon as f64,
-                    weight_decay: value.weight_decay as f64,
-                })
-            }
+            config::OptimizerType::AdamW => Ok(OptimizerConfig::AdamW(AdamWConfig {
+                learning_rate: value.learning_rate as f64,
+                beta1: value.beta1 as f64,
+                beta2: value.beta2 as f64,
+                epsilon: value.epsilon as f64,
+                weight_decay: value.weight_decay as f64,
+            })),
+            other => Err(TrainingError::initialization(format!(
+                "unsupported optimizer algorithm {:?}",
+                other
+            ))),
         }
     }
 }
@@ -102,17 +110,16 @@ impl TrainerOptimizer {
             let shape = tensor.dims().to_vec();
             let dtype = tensor.dtype();
 
-            let first_moment = Tensor::zeros(shape.as_slice(), DType::F32, device)
-                .map_err(to_runtime_error)?;
-            let second_moment = Tensor::zeros(shape.as_slice(), DType::F32, device)
-                .map_err(to_runtime_error)?;
+            let first_moment =
+                Tensor::zeros(shape.as_slice(), DType::F32, device).map_err(to_runtime_error)?;
+            let second_moment =
+                Tensor::zeros(shape.as_slice(), DType::F32, device).map_err(to_runtime_error)?;
 
-            let apply_weight_decay = should_apply_weight_decay(&name, &options.weight_decay_exclude);
+            let apply_weight_decay =
+                should_apply_weight_decay(&name, &options.weight_decay_exclude);
 
             let master = if options.use_master_weights && dtype != DType::F32 {
-                let fp32 = tensor
-                    .to_dtype(DType::F32)
-                    .map_err(to_runtime_error)?;
+                let fp32 = tensor.to_dtype(DType::F32).map_err(to_runtime_error)?;
                 Some(Var::from_tensor(&fp32).map_err(to_runtime_error)?)
             } else {
                 None
@@ -160,9 +167,7 @@ impl TrainerOptimizer {
                 None => continue,
             };
 
-            let mut grad = grad
-                .to_dtype(DType::F32)
-                .map_err(to_runtime_error)?;
+            let mut grad = grad.to_dtype(DType::F32).map_err(to_runtime_error)?;
 
             let mut norm = tensor_l2_norm(&grad)?;
 
@@ -174,7 +179,11 @@ impl TrainerOptimizer {
                 }
             }
 
-            processed.push(ProcessedGradient { index: idx, grad, norm });
+            processed.push(ProcessedGradient {
+                index: idx,
+                grad,
+                norm,
+            });
         }
 
         if processed.is_empty() {
@@ -229,23 +238,27 @@ impl TrainerOptimizer {
             let beta1 = cfg.beta1;
             let beta2 = cfg.beta2;
 
-            let new_m = (&slot.first_moment * beta1)
-                .map_err(to_runtime_error)?
-                .add(&(item.grad.clone() * (1.0 - beta1)).map_err(to_runtime_error)?)
+            let prev_m = slot
+                .first_moment
+                .affine(beta1, 0.0)
                 .map_err(to_runtime_error)?;
+            let grad_term = item
+                .grad
+                .clone()
+                .affine(1.0 - beta1, 0.0)
+                .map_err(to_runtime_error)?;
+            let new_m = prev_m.add(&grad_term).map_err(to_runtime_error)?;
 
             let grad_sq = item.grad.sqr().map_err(to_runtime_error)?;
-            let new_v = (&slot.second_moment * beta2)
-                .map_err(to_runtime_error)?
-                .add(&(grad_sq * (1.0 - beta2)).map_err(to_runtime_error)?)
+            let prev_v = slot
+                .second_moment
+                .affine(beta2, 0.0)
                 .map_err(to_runtime_error)?;
+            let grad_sq_term = grad_sq.affine(1.0 - beta2, 0.0).map_err(to_runtime_error)?;
+            let new_v = prev_v.add(&grad_sq_term).map_err(to_runtime_error)?;
 
-            let m_hat = new_m
-                .affine(scale_m, 0.0)
-                .map_err(to_runtime_error)?;
-            let v_hat = new_v
-                .affine(scale_v, 0.0)
-                .map_err(to_runtime_error)?;
+            let m_hat = new_m.affine(scale_m, 0.0).map_err(to_runtime_error)?;
+            let v_hat = new_v.affine(scale_v, 0.0).map_err(to_runtime_error)?;
             let denom = v_hat
                 .sqrt()
                 .map_err(to_runtime_error)?
@@ -260,8 +273,7 @@ impl TrainerOptimizer {
             let base = if let Some(master) = slot.master.as_ref() {
                 master.as_tensor().clone()
             } else {
-                slot
-                    .param
+                slot.param
                     .as_tensor()
                     .to_dtype(DType::F32)
                     .map_err(to_runtime_error)?
@@ -274,9 +286,7 @@ impl TrainerOptimizer {
                 base
             };
 
-            let next = decayed
-                .sub(&update)
-                .map_err(to_runtime_error)?;
+            let next = decayed.sub(&update).map_err(to_runtime_error)?;
 
             if let Some(master) = slot.master.as_ref() {
                 master.set(&next).map_err(to_runtime_error)?;
@@ -344,14 +354,17 @@ impl TrainerOptimizer {
             .collect();
 
         for slot in &mut self.params {
-            let state = by_name
-                .remove(&slot.name)
-                .ok_or_else(|| TrainingError::runtime(format!(
-                    "optimizer state missing parameter '{}'",
-                    slot.name
-                )))?;
+            let state = by_name.remove(&slot.name).ok_or_else(|| {
+                TrainingError::runtime(format!("optimizer state missing parameter '{}'", slot.name))
+            })?;
 
             let expected = numel(&slot.param.as_tensor().dims().to_vec());
+            if slot.param.as_tensor().dims() != state.shape.as_slice() {
+                return Err(TrainingError::runtime(format!(
+                    "optimizer state shape mismatch for '{}'",
+                    slot.name
+                )));
+            }
             if expected != state.first_moment.len()
                 || expected != state.second_moment.len()
                 || state.master.as_ref().map_or(false, |m| m.len() != expected)
@@ -448,7 +461,9 @@ fn flatten_to_vec(tensor: &Tensor, expected: usize) -> Result<Vec<f32>, Training
         .to_vec1::<f32>()
         .map_err(to_runtime_error)?;
     if flat.len() != expected {
-        return Err(TrainingError::runtime("unexpected element count during serialization"));
+        return Err(TrainingError::runtime(
+            "unexpected element count during serialization",
+        ));
     }
     Ok(flat)
 }

@@ -1,4 +1,4 @@
-use candle_core::{D, DType, Tensor};
+use candle_core::{DType, Tensor, D};
 use candle_nn::ops;
 
 use crate::TrainingError;
@@ -56,7 +56,9 @@ impl CrossEntropyLoss {
 
         let token_count: usize = token_dims.iter().copied().product();
         if token_count == 0 {
-            return Err(TrainingError::runtime("no tokens available for loss computation"));
+            return Err(TrainingError::runtime(
+                "no tokens available for loss computation",
+            ));
         }
 
         let device = logits.device();
@@ -72,9 +74,9 @@ impl CrossEntropyLoss {
             .map_err(to_runtime_error)?;
         let targets_flat = match targets_flat.dtype() {
             DType::U32 => targets_flat,
-            DType::I64 | DType::U8 => {
-                targets_flat.to_dtype(DType::U32).map_err(to_runtime_error)?
-            }
+            DType::I64 | DType::U8 => targets_flat
+                .to_dtype(DType::U32)
+                .map_err(to_runtime_error)?,
             dtype => {
                 return Err(TrainingError::runtime(format!(
                     "unsupported target dtype {:?} for cross entropy",
@@ -105,9 +107,7 @@ impl CrossEntropyLoss {
             ));
         }
 
-        let target_indices = targets_flat
-            .unsqueeze(1)
-            .map_err(to_runtime_error)?;
+        let target_indices = targets_flat.unsqueeze(1).map_err(to_runtime_error)?;
         let nll = log_probs
             .gather(&target_indices, 1)
             .map_err(to_runtime_error)?
@@ -123,7 +123,9 @@ impl CrossEntropyLoss {
                 .map_err(to_runtime_error)?
                 .neg()
                 .map_err(to_runtime_error)?;
-            let smoothed = nll.affine((1.0 - smoothing) as f64, 0.0).map_err(to_runtime_error)?;
+            let smoothed = nll
+                .affine((1.0 - smoothing) as f64, 0.0)
+                .map_err(to_runtime_error)?;
             let uniform_term = uniform
                 .affine(smoothing as f64, 0.0)
                 .map_err(to_runtime_error)?;
@@ -138,13 +140,9 @@ impl CrossEntropyLoss {
             .affine(1f64 / total_tokens as f64, 0.0)
             .map_err(to_runtime_error)?;
 
-        let average_loss_value = average_loss
-            .to_vec0::<f32>()
-            .map_err(to_runtime_error)?;
+        let average_loss_value = average_loss.to_vec0::<f32>().map_err(to_runtime_error)?;
 
-        let predictions = logits_flat
-            .argmax(D::Minus1)
-            .map_err(to_runtime_error)?;
+        let predictions = logits_flat.argmax(D::Minus1).map_err(to_runtime_error)?;
         let correct = predictions
             .eq(&targets_flat)
             .map_err(to_runtime_error)?

@@ -1,9 +1,13 @@
+use attention::core::RopeMode;
+use candle_core::{DType, Device};
+use layers::norm::NormKind;
+use model::{build_model_config_with_overrides, ModelConfig, ModelConfigOverrides};
 use serde::Deserialize;
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
+use tokenizers::Tokenizer;
 
 #[derive(Debug, Deserialize)]
 pub struct TrainingConfig {
@@ -17,6 +21,13 @@ pub struct TrainingConfig {
     pub scheduler: SchedulerConfig,
     #[serde(default)]
     pub runtime: RuntimeConfig,
+}
+
+#[derive(Debug)]
+pub struct ResolvedModelHyperparameters {
+    pub model: ModelConfig,
+    pub max_position_embeddings: usize,
+    pub precision: Precision,
 }
 
 impl TrainingConfig {
@@ -49,7 +60,8 @@ impl TrainingConfig {
         let mut errors = Vec::new();
 
         if self.tokenizer.vocab.is_none() && self.tokenizer.tokenizer_json.is_none() {
-            errors.push("tokenizer must provide either `vocab` or `tokenizer_json` path".to_string());
+            errors
+                .push("tokenizer must provide either `vocab` or `tokenizer_json` path".to_string());
         }
 
         if self.data.train_shards.is_empty() {
@@ -84,9 +96,10 @@ impl TrainingConfig {
             errors.push("runtime.log_every_n_steps must be greater than 0".to_string());
         }
 
-        if let (Some(heads), Some(kv_heads)) =
-            (self.model.num_attention_heads, self.model.num_key_value_heads)
-        {
+        if let (Some(heads), Some(kv_heads)) = (
+            self.model.num_attention_heads,
+            self.model.num_key_value_heads,
+        ) {
             if heads == 0 || kv_heads == 0 || heads % kv_heads != 0 {
                 errors.push(
                     "model.num_attention_heads must be divisible by model.num_key_value_heads"
@@ -111,7 +124,8 @@ impl TrainingConfig {
             (self.scheduler.warmup_steps, self.scheduler.total_steps)
         {
             if warmup > total {
-                errors.push("scheduler.warmup_steps cannot exceed scheduler.total_steps".to_string());
+                errors
+                    .push("scheduler.warmup_steps cannot exceed scheduler.total_steps".to_string());
             }
         }
 
@@ -178,6 +192,190 @@ impl TrainingConfig {
         self.data.apply_base_path(base);
         self.runtime.apply_base_path(base);
     }
+
+    pub fn resolve_model_hyperparameters(
+        &self,
+    ) -> Result<ResolvedModelHyperparameters, TrainingError> {
+        self.ensure_prerequisites()?;
+
+        let precision = self.runtime.precision;
+        let dtype = precision_to_dtype(precision);
+
+        let vocab_size = self
+            .model
+            .vocab_size
+            .or(self.detect_vocab_size()?)
+            .unwrap_or(DEFAULT_MODEL_VOCAB_SIZE);
+
+        let hidden_dim = self.model.hidden_size.unwrap_or(DEFAULT_MODEL_HIDDEN_SIZE);
+        let n_layers = self.model.num_layers.unwrap_or(DEFAULT_MODEL_NUM_LAYERS);
+        let n_heads = self
+            .model
+            .num_attention_heads
+            .unwrap_or(DEFAULT_MODEL_NUM_HEADS);
+
+        if n_heads == 0 {
+            return Err(TrainingError::initialization(
+                "model.num_attention_heads must be greater than zero",
+            ));
+        }
+        if hidden_dim % n_heads != 0 {
+            return Err(TrainingError::initialization(format!(
+                "hidden size {} must be divisible by num_attention_heads {}",
+                hidden_dim, n_heads
+            )));
+        }
+        let head_dim = hidden_dim / n_heads;
+
+        let ff_ratio = self
+            .model
+            .intermediate_size
+            .map(|width| width as f32 / hidden_dim as f32)
+            .unwrap_or(DEFAULT_MODEL_FF_RATIO);
+
+        if ff_ratio <= 0.0 {
+            return Err(TrainingError::initialization(format!(
+                "feed-forward ratio must be positive (got {})",
+                ff_ratio
+            )));
+        }
+
+        let norm_kind = DEFAULT_MODEL_NORM_KIND;
+        let rope_mode = match self.model.rope_mode.as_ref() {
+            Some(value) => parse_rope_mode(value)?,
+            None => DEFAULT_ROPE_MODE,
+        };
+
+        let attn_dropout = normalize_dropout("model.attn_dropout", self.model.attn_dropout)?;
+        let residual_dropout =
+            normalize_dropout("model.residual_dropout", self.model.residual_dropout)?;
+
+        let max_positions = self
+            .model
+            .max_position_embeddings
+            .unwrap_or(DEFAULT_MAX_POSITION_EMBEDDINGS);
+
+        let base = ModelConfig {
+            vocab_size,
+            hidden_dim,
+            n_layers,
+            n_heads,
+            head_dim,
+            ff_ratio,
+            norm_kind,
+            rope_mode: RopeMode::Off,
+            dtype: DType::F32,
+            device: Device::Cpu,
+            attn_dropout_p: None,
+            residual_dropout_p: None,
+        };
+
+        let overrides = ModelConfigOverrides {
+            attn_dropout_p: Some(attn_dropout),
+            residual_dropout_p: Some(residual_dropout),
+            dtype: Some(dtype),
+            rope_mode: Some(rope_mode),
+        };
+
+        let model = build_model_config_with_overrides(base, overrides).map_err(|err| {
+            TrainingError::initialization(format!("failed to build model config: {}", err))
+        })?;
+
+        Ok(ResolvedModelHyperparameters {
+            model,
+            max_position_embeddings: max_positions,
+            precision,
+        })
+    }
+
+    fn ensure_prerequisites(&self) -> Result<(), TrainingError> {
+        let mut missing = Vec::new();
+
+        if let Some(path) = &self.tokenizer.tokenizer_json {
+            if !path.is_file() {
+                missing.push(format!("tokenizer.tokenizer_json ({})", path.display()));
+            }
+        } else {
+            if let Some(path) = &self.tokenizer.vocab {
+                if !path.is_file() {
+                    missing.push(format!("tokenizer.vocab ({})", path.display()));
+                }
+            }
+            if let Some(path) = &self.tokenizer.merges {
+                if !path.is_file() {
+                    missing.push(format!("tokenizer.merges ({})", path.display()));
+                }
+            }
+        }
+
+        if let Some(path) = &self.tokenizer.special_tokens {
+            if !path.exists() {
+                missing.push(format!("tokenizer.special_tokens ({})", path.display()));
+            }
+        }
+
+        for shard in &self.data.train_shards {
+            if !shard.exists() {
+                missing.push(format!("data.train_shards entry ({})", shard.display()));
+            }
+        }
+        for shard in &self.data.validation_shards {
+            if !shard.exists() {
+                missing.push(format!(
+                    "data.validation_shards entry ({})",
+                    shard.display()
+                ));
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(TrainingError::initialization(format!(
+                "missing required artifacts: {}",
+                missing.join(", ")
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn detect_vocab_size(&self) -> Result<Option<usize>, TrainingError> {
+        if let Some(path) = &self.tokenizer.tokenizer_json {
+            if path.is_file() {
+                let tokenizer = Tokenizer::from_file(path).map_err(|err| {
+                    TrainingError::initialization(format!(
+                        "failed to load tokenizer json {}: {}",
+                        path.display(),
+                        err
+                    ))
+                })?;
+                return Ok(Some(tokenizer.get_vocab_size(true)));
+            }
+        }
+
+        if let Some(path) = &self.tokenizer.vocab {
+            if path.is_file() {
+                let contents = fs::read_to_string(path).map_err(|err| {
+                    TrainingError::initialization(format!(
+                        "failed to read vocab json {}: {}",
+                        path.display(),
+                        err
+                    ))
+                })?;
+                let value: serde_json::Value = serde_json::from_str(&contents).map_err(|err| {
+                    TrainingError::initialization(format!(
+                        "failed to parse vocab json {}: {}",
+                        path.display(),
+                        err
+                    ))
+                })?;
+                if let Some(map) = value.as_object() {
+                    return Ok(Some(map.len()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -194,6 +392,14 @@ pub struct ModelOverrides {
     pub num_layers: Option<usize>,
     #[serde(default)]
     pub max_position_embeddings: Option<usize>,
+    #[serde(default)]
+    pub vocab_size: Option<usize>,
+    #[serde(default)]
+    pub attn_dropout: Option<f32>,
+    #[serde(default)]
+    pub residual_dropout: Option<f32>,
+    #[serde(default)]
+    pub rope_mode: Option<String>,
     #[serde(default)]
     pub rope_theta: Option<f32>,
 }
@@ -424,6 +630,15 @@ fn absolutize_in_place(path: &mut PathBuf, base: &Path) {
     }
 }
 
+const DEFAULT_MODEL_VOCAB_SIZE: usize = 32_000;
+const DEFAULT_MODEL_HIDDEN_SIZE: usize = 4_096;
+const DEFAULT_MODEL_NUM_LAYERS: usize = 32;
+const DEFAULT_MODEL_NUM_HEADS: usize = 32;
+const DEFAULT_MODEL_FF_RATIO: f32 = 4.0;
+const DEFAULT_MAX_POSITION_EMBEDDINGS: usize = 2_048;
+const DEFAULT_MODEL_NORM_KIND: NormKind = NormKind::RmsNorm;
+const DEFAULT_ROPE_MODE: RopeMode = RopeMode::OnTheFly;
+
 fn default_batch_size() -> usize {
     8
 }
@@ -460,6 +675,41 @@ fn default_log_every_n_steps() -> usize {
     100
 }
 
+fn normalize_dropout(label: &str, value: Option<f32>) -> Result<Option<f32>, TrainingError> {
+    match value {
+        Some(dropout) if dropout < 0.0 || dropout >= 1.0 => {
+            Err(TrainingError::validation(vec![format!(
+                "{} must be in [0, 1) (got {})",
+                label, dropout
+            )]))
+        }
+        Some(dropout) if dropout <= 0.0 => Ok(None),
+        Some(dropout) => Ok(Some(dropout)),
+        None => Ok(None),
+    }
+}
+
+fn parse_rope_mode(value: &str) -> Result<RopeMode, TrainingError> {
+    match value.to_ascii_lowercase().as_str() {
+        "off" | "disabled" => Ok(RopeMode::Off),
+        "preapply" | "pre-applied" | "pre" => Ok(RopeMode::Preapply),
+        "on_the_fly" | "onthefly" | "online" | "auto" => Ok(RopeMode::OnTheFly),
+        other => Err(TrainingError::validation(vec![format!(
+            "unsupported rope_mode override '{}'",
+            other
+        )])),
+    }
+}
+
+fn precision_to_dtype(precision: Precision) -> DType {
+    match precision {
+        Precision::Fp32 => DType::F32,
+        Precision::Fp16 => DType::F16,
+        Precision::Bf16 => DType::BF16,
+        Precision::Mixed => DType::BF16,
+    }
+}
+
 #[derive(Debug)]
 pub enum TrainingError {
     Io(std::io::Error),
@@ -488,11 +738,9 @@ impl fmt::Display for TrainingError {
         match self {
             TrainingError::Io(err) => write!(f, "failed to read config: {}", err),
             TrainingError::ConfigFormat(err) => write!(f, "failed to parse config: {}", err),
-            TrainingError::Validation(messages) => write!(
-                f,
-                "invalid configuration: {}",
-                messages.join("; ")
-            ),
+            TrainingError::Validation(messages) => {
+                write!(f, "invalid configuration: {}", messages.join("; "))
+            }
             TrainingError::Initialization(msg) => {
                 write!(f, "trainer initialization failed: {}", msg)
             }

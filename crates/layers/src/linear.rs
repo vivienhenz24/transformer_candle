@@ -10,9 +10,9 @@
 //! recipes (Glorot, Kaiming, scaled variants) so downstream crates can share a
 //! single implementation.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use candle_core::{DType, Device, Error, Result, Tensor};
+use candle_core::{DType, Device, Error, Result, Tensor, Var};
 
 use crate::{checks, dtypes::PrecisionPolicy};
 
@@ -125,19 +125,29 @@ impl LinearInit {
 #[derive(Debug, Clone)]
 pub struct Linear {
     config: LinearConfig,
-    weight: Arc<Mutex<Tensor>>,
-    bias: Option<Arc<Mutex<Tensor>>>,
+    weight: Var,
+    bias: Option<Var>,
+    instance_id: usize,
 }
+
+static LINEAR_INSTANCE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl Linear {
     /// Constructs a linear layer from pre-existing parameters.
     pub fn new(config: LinearConfig, weight: Tensor, bias: Option<Tensor>) -> Result<Self> {
         Self::validate_weight(&config, &weight)?;
         Self::validate_bias(&config, bias.as_ref())?;
+        let weight = Var::from_tensor(&weight)?;
+        let bias = match bias {
+            Some(tensor) => Some(Var::from_tensor(&tensor)?),
+            None => None,
+        };
+        let instance_id = LINEAR_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             config,
-            weight: Arc::new(Mutex::new(weight)),
-            bias: bias.map(|b| Arc::new(Mutex::new(b))),
+            weight,
+            bias,
+            instance_id,
         })
     }
 
@@ -171,46 +181,79 @@ impl Linear {
                 "tied linears must agree on bias usage to share storage".into(),
             ));
         }
+        let instance_id = LINEAR_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             config,
             weight: source.weight.clone(),
-            bias: source.bias.as_ref().map(Arc::clone),
+            bias: source.bias.clone(),
+            instance_id,
         })
     }
 
     /// Returns a clone of the underlying weight tensor.
     pub fn weight(&self) -> Tensor {
-        self.weight.lock().unwrap().clone()
+        self.weight.as_tensor().clone()
     }
 
     /// Returns a clone of the bias tensor if present.
     pub fn bias(&self) -> Option<Tensor> {
-        self.bias.as_ref().map(|bias| bias.lock().unwrap().clone())
+        self.bias.as_ref().map(|bias| bias.as_tensor().clone())
     }
 
     /// Copies `value` into the shared weight storage (useful for weight tying scenarios).
-    pub fn copy_weight_from(&mut self, value: &Tensor) -> Result<()> {
+    pub fn copy_weight_from(&self, value: &Tensor) -> Result<()> {
         Self::validate_weight(&self.config, value)?;
-        let mut weight = self.weight.lock().unwrap();
-        checks::expect_same_dtype("linear.weight", value, "linear.weight", &*weight)?;
-        let cast = value.to_dtype(weight.dtype())?;
-        *weight = cast;
+        let existing = self.weight.as_tensor();
+        checks::expect_same_dtype("linear.weight", value, "linear.weight", existing)?;
+        let cast = value.to_dtype(existing.dtype())?;
+        self.weight.set(&cast)?;
         Ok(())
     }
 
     /// Copies `value` into the shared bias storage.
-    pub fn copy_bias_from(&mut self, value: &Tensor) -> Result<()> {
+    pub fn copy_bias_from(&self, value: &Tensor) -> Result<()> {
         match (&self.bias, value) {
             (Some(existing), input) => {
                 Self::validate_bias(&self.config, Some(input))?;
-                let mut bias = existing.lock().unwrap();
-                checks::expect_same_dtype("linear.bias", input, "linear.bias", &*bias)?;
-                let cast = input.to_dtype(bias.dtype())?;
-                *bias = cast;
+                let tensor = existing.as_tensor();
+                checks::expect_same_dtype("linear.bias", input, "linear.bias", tensor)?;
+                let cast = input.to_dtype(tensor.dtype())?;
+                existing.set(&cast)?;
                 Ok(())
             }
             (None, _) => Err(Error::Msg("layer has no bias to copy into".into())),
         }
+    }
+
+    fn scope_name(&self) -> String {
+        format!("linear_{}", self.instance_id)
+    }
+
+    fn scoped_prefix(&self, scope: Option<&str>) -> String {
+        match scope {
+            Some(prefix) if !prefix.is_empty() => format!("{}.{}", prefix, self.scope_name()),
+            _ => self.scope_name(),
+        }
+    }
+
+    fn collect_named_parameters(&self, scope: Option<&str>) -> Vec<(String, Var)> {
+        let prefix = self.scoped_prefix(scope);
+        let mut params = Vec::with_capacity(if self.bias.is_some() { 2 } else { 1 });
+        params.push((format!("{}.weight", prefix), self.weight.clone()));
+        if let Some(bias) = &self.bias {
+            params.push((format!("{}.bias", prefix), bias.clone()));
+        }
+        params
+    }
+
+    /// Returns the parameters belonging to this layer with names scoped to the instance.
+    pub fn named_parameters(&self) -> Vec<(String, Var)> {
+        self.collect_named_parameters(None)
+    }
+
+    /// Returns the parameters with an additional namespacing prefix supplied by the caller.
+    pub fn named_parameters_with_scope(&self, scope: &str) -> Vec<(String, Var)> {
+        self.collect_named_parameters(Some(scope))
     }
 
     fn validate_weight(config: &LinearConfig, weight: &Tensor) -> Result<()> {
@@ -290,10 +333,7 @@ impl LinearLayer for Linear {
         self.validate_input(hidden)?;
 
         let input = policy.cast_for_matmul(hidden)?;
-        let weight = {
-            let guard = self.weight.lock().unwrap();
-            policy.cast_for_matmul(&*guard)?
-        };
+        let weight = policy.cast_for_matmul(self.weight.as_tensor())?;
         let weight_t = weight.t()?;
         let dims = input.dims();
 
@@ -310,10 +350,7 @@ impl LinearLayer for Linear {
         };
 
         if let Some(bias) = &self.bias {
-            let bias = {
-                let guard = bias.lock().unwrap();
-                policy.cast_for_matmul(&*guard)?
-            };
+            let bias = policy.cast_for_matmul(bias.as_tensor())?;
             output = output.broadcast_add(&bias)?;
         }
 
@@ -449,7 +486,7 @@ mod tests {
         let device = Device::Cpu;
         let config = LinearConfig::new(16, 16);
         let init = LinearInit::XavierUniform;
-        let mut base = Linear::with_init(config.clone(), &init, &device, DType::F32)?;
+        let base = Linear::with_init(config.clone(), &init, &device, DType::F32)?;
         let tied = Linear::tied(config.clone(), &base)?;
 
         let new_weight = Tensor::full(
@@ -469,6 +506,34 @@ mod tests {
             .abs()?
             .max_all()?;
         assert!(diff.to_vec0::<f32>()? <= 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn named_parameters_scope_each_instance() -> Result<()> {
+        let device = Device::Cpu;
+        let config = LinearConfig::new(16, 8);
+        let first = Linear::with_init(
+            config.clone(),
+            &LinearInit::XavierUniform,
+            &device,
+            DType::F32,
+        )?;
+        let second = Linear::with_init(config, &LinearInit::XavierUniform, &device, DType::F32)?;
+
+        let first_named = first.named_parameters();
+        let second_named = second.named_parameters();
+
+        assert_eq!(first_named.len(), 2);
+        assert_eq!(second_named.len(), 2);
+        assert!(first_named[0].0.ends_with(".weight"));
+        assert!(second_named[0].0.ends_with(".weight"));
+        assert_ne!(first_named[0].0, second_named[0].0);
+        assert_ne!(first_named[1].0, second_named[1].0);
+
+        let scoped = first.named_parameters_with_scope("block0.qkv");
+        assert!(scoped[0].0.starts_with("block0.qkv."));
+
         Ok(())
     }
 }

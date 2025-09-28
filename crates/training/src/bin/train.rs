@@ -1,7 +1,7 @@
 use std::env;
 use std::process;
 
-use training::{TrainingConfig, TrainingError, Trainer};
+use training::{Trainer, TrainingConfig, TrainingError};
 
 fn main() {
     if let Err(err) = run() {

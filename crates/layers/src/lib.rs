@@ -76,7 +76,7 @@
 //! use layers::{
 //!     dtypes::PrecisionPolicy,
 //!     linear::LinearInit,
-//!     mlp::{FeedForward, FeedForwardConfig},
+//!     mlp::{FeedForward, FeedForwardConfig, FeedForwardLayer},
 //!     activations::ActivationKind,
 //! };
 //!

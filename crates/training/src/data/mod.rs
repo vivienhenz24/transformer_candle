@@ -201,10 +201,7 @@ impl StreamingTextDataLoader {
             let encoding = self
                 .tokenizer
                 .encode(text, true)
-                .map_err(|err| TrainingError::runtime(format!(
-                    "tokenization failed: {}",
-                    err
-                )))?;
+                .map_err(|err| TrainingError::runtime(format!("tokenization failed: {}", err)))?;
             let mut ids = encoding.get_ids().to_vec();
             if let Some(token) = self.separator_token_id {
                 ids.push(token);
@@ -270,12 +267,7 @@ impl StreamingTextDataLoader {
 
         let effective_lengths: Vec<usize> = sequences.iter().map(|(_, len)| *len).collect();
         let target_len = if self.trim_padding {
-            effective_lengths
-                .iter()
-                .copied()
-                .max()
-                .unwrap_or(1)
-                .max(1)
+            effective_lengths.iter().copied().max().unwrap_or(1).max(1)
         } else {
             self.sequence_length
         };
@@ -288,34 +280,27 @@ impl StreamingTextDataLoader {
                 seq.resize(target_len, self.pad_token_id);
             }
             for idx in 0..target_len {
-                let token = seq
-                    .get(idx)
-                    .copied()
-                    .unwrap_or(self.pad_token_id);
+                let token = seq.get(idx).copied().unwrap_or(self.pad_token_id);
                 tokens.push(token);
                 mask.push(if idx < valid { 1 } else { 0 });
             }
         }
 
-        let batch_tokens = Tensor::from_slice(
-            &tokens,
-            (self.micro_batch_size, target_len),
-            &self.device,
-        )
-        .map_err(|err| TrainingError::runtime(format!(
-            "failed to materialize token tensor: {}",
-            err
-        )))?;
+        let batch_tokens =
+            Tensor::from_slice(&tokens, (self.micro_batch_size, target_len), &self.device)
+                .map_err(|err| {
+                    TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
+                })?;
 
-        let batch_mask = Tensor::from_slice(
-            &mask,
-            (self.micro_batch_size, target_len),
-            &self.device,
-        )
-        .map_err(|err| TrainingError::runtime(format!(
-            "failed to materialize attention mask tensor: {}",
-            err
-        )))?;
+        let batch_mask =
+            Tensor::from_slice(&mask, (self.micro_batch_size, target_len), &self.device).map_err(
+                |err| {
+                    TrainingError::runtime(format!(
+                        "failed to materialize attention mask tensor: {}",
+                        err
+                    ))
+                },
+            )?;
 
         let micro_batch_index = self.micro_batch_index;
         let micro_batches_per_step = self.micro_batches_per_step;

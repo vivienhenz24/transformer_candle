@@ -14,7 +14,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use candle_core::{DType, Device, Error, Result, Tensor};
+use candle_core::{DType, Device, Error, Result, Tensor, Var};
 
 use crate::{
     activations::{self, Activation, ActivationKind},
@@ -157,6 +157,24 @@ impl FeedForward {
 
     fn apply_activation(&self, tensor: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
         self.activation.forward(tensor, policy)
+    }
+
+    /// Returns the parameters belonging to this MLP, namespaced under `scope`.
+    pub fn named_parameters(&self, scope: &str) -> Vec<(String, Var)> {
+        let mut params = Vec::with_capacity(4);
+        let up_scope = if scope.is_empty() {
+            "up_proj".to_string()
+        } else {
+            format!("{}.up_proj", scope)
+        };
+        let down_scope = if scope.is_empty() {
+            "down_proj".to_string()
+        } else {
+            format!("{}.down_proj", scope)
+        };
+        params.extend(self.up_proj.named_parameters_with_scope(&up_scope));
+        params.extend(self.down_proj.named_parameters_with_scope(&down_scope));
+        params
     }
 }
 
@@ -370,6 +388,43 @@ mod tests {
         let out2 = ff.forward(&input, &policy)?;
         let diff = out1.sub(&out2)?.abs()?.max_all()?.to_vec0::<f32>()?;
         assert!(diff <= 1e-7);
+        Ok(())
+    }
+
+    #[test]
+    fn named_parameters_delegates_to_linears() -> Result<()> {
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+        let config = FeedForwardConfig::new(4, 8, ActivationKind::Gelu);
+        let ff = FeedForward::with_init(
+            config,
+            ActivationKind::Gelu,
+            &LinearInit::XavierUniform,
+            &LinearInit::XavierUniform,
+            &device,
+            dtype,
+        )?;
+
+        let params = ff.named_parameters("block0.mlp");
+        assert_eq!(params.len(), 4);
+        let names = params
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        assert!(names.iter().all(|n| n.starts_with("block0.mlp.")));
+        assert!(names
+            .iter()
+            .any(|n| n.contains(".up_proj.") && n.ends_with(".weight")));
+        assert!(names
+            .iter()
+            .any(|n| n.contains(".up_proj.") && n.ends_with(".bias")));
+        assert!(names
+            .iter()
+            .any(|n| n.contains(".down_proj.") && n.ends_with(".weight")));
+        assert!(names
+            .iter()
+            .any(|n| n.contains(".down_proj.") && n.ends_with(".bias")));
+
         Ok(())
     }
 }
