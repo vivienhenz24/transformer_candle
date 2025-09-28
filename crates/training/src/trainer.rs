@@ -402,11 +402,7 @@ impl Trainer {
                 continue;
             };
 
-            let (mut found_inf, grad_norm) = if self.gradient_scaler.is_enabled() {
-                self.unscale_gradients(grads)?
-            } else {
-                (false, 0.0)
-            };
+            let (mut found_inf, grad_norm) = self.unscale_gradients(grads)?;
 
             if let Some(avg_loss) = step_metrics.average_loss() {
                 if !avg_loss.is_finite() {
@@ -1298,6 +1294,11 @@ struct StepMetrics {
 
 impl StepMetrics {
     fn accumulate(&mut self, metrics: &LossMetrics) {
+        println!(
+            "[debug] step_metrics accumulate average_loss={:.6} total_tokens={}",
+            metrics.average_loss(),
+            metrics.total_tokens()
+        );
         self.loss_sum += metrics.average_loss() as f64 * metrics.total_tokens() as f64;
         self.tokens += metrics.total_tokens();
         self.correct += metrics.correct_tokens();
