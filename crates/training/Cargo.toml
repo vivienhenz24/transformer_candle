@@ -7,7 +7,7 @@ edition = "2021"
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 model = { path = "../model" }
-tokenizer = { path = "../tokenizer" }
+tokenizer = { path = "../tokenizer", features = ["train"] }
 pretraining-data = { path = "../pretraining-data" }
 attention = { path = "../attention" }
 layers = { path = "../layers" }
@@ -17,3 +17,13 @@ serde_json = "1.0"
 futures = "0.3"
 rand = { version = "0.8", features = ["std"] }
 tokenizers = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+prost = "0.12"
+bytes = "1"
+crc32fast = "1.3"
+clap = { version = "4.5", features = ["derive"] }
+ctrlc = "3.4"
+
+[dev-dependencies]
+tempfile = "3"

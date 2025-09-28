@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 pub mod scaler;
 
-pub use scaler::{GradientScaler, LossScaleConfig};
+pub use scaler::{GradientScaler, GradientScalerState, LossScaleConfig};
 
 use candle_core::{backprop::GradStore, DType, Tensor, Var};
 use serde::{Deserialize, Serialize};

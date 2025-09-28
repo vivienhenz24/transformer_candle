@@ -2,14 +2,14 @@ use attention::core::RopeMode;
 use candle_core::{DType, Device};
 use layers::norm::NormKind;
 use model::{build_model_config_with_overrides, ModelConfig, ModelConfigOverrides};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fmt, fs,
     path::{Path, PathBuf},
 };
 use tokenizers::Tokenizer;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrainingConfig {
     #[serde(default)]
     pub model: ModelOverrides,
@@ -23,7 +23,7 @@ pub struct TrainingConfig {
     pub runtime: RuntimeConfig,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedModelHyperparameters {
     pub model: ModelConfig,
     pub max_position_embeddings: usize,
@@ -378,7 +378,7 @@ impl TrainingConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelOverrides {
     #[serde(default)]
     pub hidden_size: Option<usize>,
@@ -404,7 +404,7 @@ pub struct ModelOverrides {
     pub rope_theta: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenizerConfig {
     #[serde(default)]
     pub tokenizer_json: Option<PathBuf>,
@@ -431,7 +431,7 @@ impl TokenizerConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataConfig {
     pub train_shards: Vec<PathBuf>,
     #[serde(default)]
@@ -462,7 +462,7 @@ impl DataConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizerConfig {
     #[serde(default)]
     pub algorithm: OptimizerType,
@@ -491,7 +491,7 @@ impl Default for OptimizerConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OptimizerType {
     AdamW,
@@ -505,7 +505,7 @@ impl Default for OptimizerType {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerConfig {
     #[serde(default)]
     pub strategy: LearningRateSchedule,
@@ -534,7 +534,7 @@ impl Default for SchedulerConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningRateSchedule {
     Constant,
@@ -550,7 +550,7 @@ impl Default for LearningRateSchedule {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     #[serde(default = "default_seed")]
     pub seed: u64,
@@ -562,6 +562,8 @@ pub struct RuntimeConfig {
     pub checkpoint: Option<CheckpointConfig>,
     #[serde(default)]
     pub evaluation: EvaluationConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -572,6 +574,7 @@ impl Default for RuntimeConfig {
             log_every_n_steps: default_log_every_n_steps(),
             checkpoint: None,
             evaluation: EvaluationConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -581,10 +584,12 @@ impl RuntimeConfig {
         if let Some(checkpoint) = self.checkpoint.as_mut() {
             checkpoint.apply_base_path(base);
         }
+        self.evaluation.apply_base_path(base);
+        self.logging.apply_base_path(base);
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointConfig {
     pub directory: PathBuf,
     #[serde(default)]
@@ -601,15 +606,68 @@ impl CheckpointConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EvaluationConfig {
     #[serde(default)]
     pub every_n_steps: Option<usize>,
     #[serde(default)]
     pub every_n_epochs: Option<usize>,
+    #[serde(default)]
+    pub max_batches: Option<usize>,
+    #[serde(default)]
+    pub best: Option<BestCheckpointConfig>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+impl EvaluationConfig {
+    fn apply_base_path(&mut self, base: &Path) {
+        if let Some(best) = self.best.as_mut() {
+            best.apply_base_path(base);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BestCheckpointConfig {
+    pub directory: PathBuf,
+    #[serde(default)]
+    pub max_keep: Option<usize>,
+}
+
+impl BestCheckpointConfig {
+    fn apply_base_path(&mut self, base: &Path) {
+        absolutize_in_place(&mut self.directory, base);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_true_bool")]
+    pub enable_stdout: bool,
+    #[serde(default)]
+    pub tensorboard: Option<PathBuf>,
+    #[serde(default = "default_tensorboard_flush")]
+    pub tensorboard_flush_every_n: usize,
+}
+
+impl LoggingConfig {
+    pub fn apply_base_path(&mut self, base: &Path) {
+        if let Some(dir) = self.tensorboard.as_mut() {
+            absolutize_in_place(dir, base);
+        }
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enable_stdout: true,
+            tensorboard: None,
+            tensorboard_flush_every_n: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Precision {
     Fp32,
@@ -673,6 +731,14 @@ fn default_precision() -> Precision {
 
 fn default_log_every_n_steps() -> usize {
     100
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+fn default_tensorboard_flush() -> usize {
+    10
 }
 
 fn normalize_dropout(label: &str, value: Option<f32>) -> Result<Option<f32>, TrainingError> {

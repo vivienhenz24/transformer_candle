@@ -1,8 +1,10 @@
 use candle_core::{DType, Tensor};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{config::Precision, TrainingError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LossScaleConfig {
     pub initial_scale: f32,
     pub growth_factor: f32,
@@ -41,6 +43,16 @@ struct EnabledState {
     loss_scale: f32,
     stable_steps: usize,
     config: LossScaleConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GradientScalerState {
+    Disabled,
+    Enabled {
+        loss_scale: f32,
+        stable_steps: usize,
+        config: LossScaleConfig,
+    },
 }
 
 impl GradientScaler {
@@ -133,6 +145,36 @@ impl GradientScaler {
                 }
             }
         }
+    }
+
+    pub fn state(&self) -> GradientScalerState {
+        match &self.state {
+            ScalerState::Disabled => GradientScalerState::Disabled,
+            ScalerState::Enabled(state) => GradientScalerState::Enabled {
+                loss_scale: state.loss_scale,
+                stable_steps: state.stable_steps,
+                config: state.config.clone(),
+            },
+        }
+    }
+
+    pub fn load_state(&mut self, snapshot: GradientScalerState) {
+        self.state = match snapshot {
+            GradientScalerState::Disabled => ScalerState::Disabled,
+            GradientScalerState::Enabled {
+                loss_scale,
+                stable_steps,
+                config,
+            } => {
+                let cfg = sanitize_config(config);
+                let clamped_loss = loss_scale.clamp(cfg.min_scale, cfg.max_scale);
+                ScalerState::Enabled(EnabledState {
+                    loss_scale: clamped_loss,
+                    stable_steps,
+                    config: cfg,
+                })
+            }
+        };
     }
 }
 

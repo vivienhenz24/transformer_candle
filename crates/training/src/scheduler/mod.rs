@@ -1,13 +1,17 @@
 use std::f64::consts::PI;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{config, TrainingError};
 
 pub trait LRScheduler: Send {
     fn step(&mut self) -> f64;
     fn learning_rate(&self) -> f64;
+    fn snapshot(&self) -> SchedulerState;
+    fn load_snapshot(&mut self, state: &SchedulerState) -> Result<(), TrainingError>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchedulerConfig {
     LinearWarmupCosine {
         base_lr: f64,
@@ -27,6 +31,13 @@ pub enum SchedulerConfig {
         min_lr: f64,
         power: f64,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SchedulerState {
+    LinearWarmupCosine { step: usize, current_lr: f64 },
+    ConstantWithWarmup { step: usize, current_lr: f64 },
+    PolynomialDecay { step: usize, current_lr: f64 },
 }
 
 impl SchedulerConfig {
@@ -188,6 +199,25 @@ impl LRScheduler for LinearWarmupCosine {
     fn learning_rate(&self) -> f64 {
         self.current_lr
     }
+
+    fn snapshot(&self) -> SchedulerState {
+        SchedulerState::LinearWarmupCosine {
+            step: self.step,
+            current_lr: self.current_lr,
+        }
+    }
+
+    fn load_snapshot(&mut self, state: &SchedulerState) -> Result<(), TrainingError> {
+        if let SchedulerState::LinearWarmupCosine { step, current_lr } = state {
+            self.step = *step;
+            self.current_lr = *current_lr;
+            Ok(())
+        } else {
+            Err(TrainingError::initialization(
+                "scheduler state does not match linear warmup cosine",
+            ))
+        }
+    }
 }
 
 struct ConstantWithWarmup {
@@ -237,6 +267,25 @@ impl LRScheduler for ConstantWithWarmup {
 
     fn learning_rate(&self) -> f64 {
         self.current_lr
+    }
+
+    fn snapshot(&self) -> SchedulerState {
+        SchedulerState::ConstantWithWarmup {
+            step: self.step,
+            current_lr: self.current_lr,
+        }
+    }
+
+    fn load_snapshot(&mut self, state: &SchedulerState) -> Result<(), TrainingError> {
+        if let SchedulerState::ConstantWithWarmup { step, current_lr } = state {
+            self.step = *step;
+            self.current_lr = *current_lr;
+            Ok(())
+        } else {
+            Err(TrainingError::initialization(
+                "scheduler state does not match constant with warmup",
+            ))
+        }
     }
 }
 
@@ -308,6 +357,25 @@ impl LRScheduler for PolynomialDecay {
 
     fn learning_rate(&self) -> f64 {
         self.current_lr
+    }
+
+    fn snapshot(&self) -> SchedulerState {
+        SchedulerState::PolynomialDecay {
+            step: self.step,
+            current_lr: self.current_lr,
+        }
+    }
+
+    fn load_snapshot(&mut self, state: &SchedulerState) -> Result<(), TrainingError> {
+        if let SchedulerState::PolynomialDecay { step, current_lr } = state {
+            self.step = *step;
+            self.current_lr = *current_lr;
+            Ok(())
+        } else {
+            Err(TrainingError::initialization(
+                "scheduler state does not match polynomial decay",
+            ))
+        }
     }
 }
 
