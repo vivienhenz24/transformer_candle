@@ -80,10 +80,30 @@ impl NormImpl {
         }
 
         if let Some(weight) = &weight {
-            Self::expect_vector(weight, config.hidden_size, "weight")?;
+            checks::expect_shape("norm.weight", weight, &[config.hidden_size])?;
+            checks::expect_dtype_in(
+                "norm.weight",
+                weight,
+                &[
+                    candle_core::DType::F16,
+                    candle_core::DType::BF16,
+                    candle_core::DType::F32,
+                ],
+            )?;
+            checks::expect_contiguous("norm.weight", weight)?;
         }
         if let Some(bias) = &bias {
-            Self::expect_vector(bias, config.hidden_size, "bias")?;
+            checks::expect_shape("norm.bias", bias, &[config.hidden_size])?;
+            checks::expect_dtype_in(
+                "norm.bias",
+                bias,
+                &[
+                    candle_core::DType::F16,
+                    candle_core::DType::BF16,
+                    candle_core::DType::F32,
+                ],
+            )?;
+            checks::expect_contiguous("norm.bias", bias)?;
         }
 
         Ok(Self {
@@ -97,20 +117,8 @@ impl NormImpl {
         &self.config
     }
 
-    fn expect_vector(tensor: &Tensor, size: usize, name: &str) -> Result<()> {
-        let dims = tensor.dims();
-        if dims.len() == 1 && dims[0] == size {
-            Ok(())
-        } else {
-            Err(Error::Msg(format!(
-                "expected {} parameter of shape [{}], got {:?}",
-                name, size, dims
-            )))
-        }
-    }
-
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
-        checks::expect_batch_seq_hidden(hidden, self.config.hidden_size)?;
+        checks::expect_batch_seq_hidden("norm.input", hidden, self.config.hidden_size)?;
 
         let hidden_size = self.config.hidden_size as f64;
         let mut compute = policy.cast_for_reduction(hidden)?;
@@ -125,14 +133,17 @@ impl NormImpl {
         let mut normalized = compute.broadcast_div(&denom)?;
 
         if normalized.dtype() != policy.compute() {
+            checks::ensure_cast_supported("norm.output", normalized.dtype(), policy.compute())?;
             normalized = normalized.to_dtype(policy.compute())?;
         }
 
         if let Some(weight) = &self.weight {
+            checks::ensure_cast_supported("norm.weight", weight.dtype(), normalized.dtype())?;
             let weight = weight.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_mul(&weight)?;
         }
         if let Some(bias) = &self.bias {
+            checks::ensure_cast_supported("norm.bias", bias.dtype(), normalized.dtype())?;
             let bias = bias.to_dtype(normalized.dtype())?;
             normalized = normalized.broadcast_add(&bias)?;
         }
