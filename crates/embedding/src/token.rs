@@ -127,11 +127,7 @@ impl TokenEmbedding {
                     ));
                 }
             }
-            _ => {
-                return Err(Error::Msg(
-                    "token_ids must be shaped [batch, seq]".into(),
-                ))
-            }
+            _ => return Err(Error::Msg("token_ids must be shaped [batch, seq]".into())),
         }
 
         if !is_integer_dtype(token_ids.dtype()) {

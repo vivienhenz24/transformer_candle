@@ -35,9 +35,7 @@ fn forward_rejects_out_of_range_ids() -> Result<()> {
     let token_ids = make_ids(&[0, 4], (1, 2))?;
 
     let err = embedding.forward(&token_ids).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("token id 4 exceeds vocab size"));
+    assert!(err.to_string().contains("token id 4 exceeds vocab size"));
     Ok(())
 }
 
@@ -66,4 +64,3 @@ fn tied_linear_head_produces_finite_logits() -> Result<()> {
     }
     Ok(())
 }
-

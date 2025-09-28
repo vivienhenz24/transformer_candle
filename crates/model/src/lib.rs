@@ -1,5 +1,5 @@
-pub mod config;
 pub mod block;
+pub mod config;
 pub mod model;
 
 pub use block::DecoderBlock;

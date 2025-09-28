@@ -53,9 +53,7 @@ impl ModelConfig {
         }
         if let Some(p) = self.residual_dropout_p {
             if !(0.0..1.0).contains(&p) {
-                return Err(Error::Msg(
-                    "residual_dropout_p must be in [0, 1)".into(),
-                ));
+                return Err(Error::Msg("residual_dropout_p must be in [0, 1)".into()));
             }
         }
         Ok(())

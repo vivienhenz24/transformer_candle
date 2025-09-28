@@ -11,7 +11,7 @@ use layers::{
     dtypes::PrecisionPolicy,
     linear::{Linear, LinearConfig, LinearInit},
     mlp::{FeedForward, FeedForwardConfig, FeedForwardLayer},
-    norm::{LayerNorm, NormalizationLayer, NormConfig, NormKind, RmsNorm},
+    norm::{LayerNorm, NormConfig, NormKind, NormalizationLayer, RmsNorm},
     residual::{Residual, ResidualConfig},
 };
 
@@ -75,7 +75,11 @@ impl fmt::Debug for DecoderBlock {
 
 impl DecoderBlock {
     /// Construct a decoder block from the shared [`ModelConfig`].
-    pub fn new(index: usize, model_cfg: &ModelConfig, mut attn_cfg: AttentionConfig) -> Result<Self> {
+    pub fn new(
+        index: usize,
+        model_cfg: &ModelConfig,
+        mut attn_cfg: AttentionConfig,
+    ) -> Result<Self> {
         let policy = PrecisionPolicy::from_parameter_dtype(model_cfg.dtype);
 
         let norm_attn = build_norm(
@@ -227,9 +231,8 @@ impl DecoderBlock {
                 .rope_preapply
                 .as_ref()
                 .ok_or_else(|| Error::Msg("preapply rope requires rope instance".into()))?;
-            let positions = rope_positions.ok_or_else(|| {
-                Error::Msg("preapply rope requires position tensor".into())
-            })?;
+            let positions = rope_positions
+                .ok_or_else(|| Error::Msg("preapply rope requires position tensor".into()))?;
             let (q_rot, k_rot) = rope.apply_rotary_embeddings(&q_heads, &k_heads, positions)?;
             q_heads = q_rot;
             k_heads = k_rot;
