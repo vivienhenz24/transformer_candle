@@ -1,6 +1,5 @@
-use anyhow::Result;
 use attention::core::RopeMode;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Device, Result, Tensor};
 use layers::norm::NormKind;
 use model::{Model, ModelConfig};
 
