@@ -2204,19 +2204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transformer"
-version = "0.1.0"
-dependencies = [
- "attention",
- "candle-core",
- "candle-nn",
- "embedding",
- "pretraining-data",
- "tokenizer",
- "tokenizers",
-]
-
-[[package]]
 name = "typenum"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
