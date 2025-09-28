@@ -9,6 +9,3 @@ embedding = { path = "../embedding" }
 layers = { path = "../layers" }
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 log = "0.4"
-
-[dev-dependencies]
-anyhow = "1"

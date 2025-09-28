@@ -44,7 +44,8 @@ impl Model {
 
         let mut attn_cfg = AttentionConfig::from_env();
         attn_cfg.dropout_p = config.attn_dropout_p;
-        attn_cfg.rope_mode = config.rope_mode;
+        let rope_mode = config.rope_mode.clone();
+        attn_cfg.rope_mode = rope_mode.clone();
         attn_cfg.use_padding_mask = false;
 
         let mut blocks = Vec::with_capacity(config.n_layers);
@@ -52,7 +53,7 @@ impl Model {
             blocks.push(DecoderBlock::new(layer, &config, attn_cfg.clone())?);
         }
 
-        let uses_preapply_rope = matches!(config.rope_mode, RopeMode::Preapply);
+        let uses_preapply_rope = matches!(rope_mode, RopeMode::Preapply);
 
         Ok(Self {
             config,

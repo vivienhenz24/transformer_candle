@@ -1018,6 +1018,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "model"
+version = "0.1.0"
+dependencies = [
+ "attention",
+ "candle-core",
+ "embedding",
+ "layers",
+ "log",
+]
+
+[[package]]
 name = "monostate"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

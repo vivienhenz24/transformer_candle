@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use attention::core::{Config as AttentionConfig, RopeMode};
 use attention::reference::ExactAttention;
+use attention::Attention;
 use candle_core::{bail, Error, Result, Tensor};
 use embedding::positional::rope::{Rope, RopeConfig};
 use layers::{
     activations::ActivationKind,
     checks,
     dtypes::PrecisionPolicy,
-    linear::{Linear, LinearConfig, LinearInit},
+    linear::{Linear, LinearConfig, LinearInit, LinearLayer},
     mlp::{FeedForward, FeedForwardConfig, FeedForwardLayer},
     norm::{LayerNorm, NormConfig, NormKind, NormalizationLayer, RmsNorm},
     residual::{Residual, ResidualConfig},
@@ -34,6 +35,7 @@ pub(crate) fn build_norm(
             let weight = Tensor::ones(hidden, dtype, device)?;
             Ok(Arc::new(RmsNorm::new(weight, config)?))
         }
+        other => Err(Error::Msg(format!("unsupported norm kind {:?}", other))),
     }
 }
 
@@ -95,7 +97,7 @@ impl DecoderBlock {
             &model_cfg.device,
         )?;
 
-        let mut qkv_config = LinearConfig::new(model_cfg.hidden_dim, model_cfg.head_dim);
+        let mut qkv_config = LinearConfig::new(model_cfg.hidden_dim, model_cfg.hidden_dim);
         qkv_config.bias = true;
         qkv_config.fused_projections = 3;
         let qkv_proj = Linear::with_init(
@@ -136,10 +138,10 @@ impl DecoderBlock {
         let residual_mlp = Residual::new(residual_cfg, base_seed + 1);
 
         attn_cfg.dropout_p = model_cfg.attn_dropout_p;
-        attn_cfg.rope_mode = model_cfg.rope_mode;
+        attn_cfg.rope_mode = model_cfg.rope_mode.clone();
         attn_cfg.use_padding_mask = false;
 
-        let rope_mode = model_cfg.rope_mode;
+        let rope_mode = model_cfg.rope_mode.clone();
         let rope_config = match rope_mode {
             RopeMode::Off => None,
             _ => Some(default_rope_config(model_cfg.head_dim)),
@@ -191,7 +193,8 @@ impl DecoderBlock {
             ),
         };
         let reshaped = tensor.reshape((batch, seq, self.heads, self.head_dim))?;
-        reshaped.permute((0, 2, 1, 3))
+        let permuted = reshaped.permute((0, 2, 1, 3))?;
+        permuted.contiguous()
     }
 
     fn merge_from_heads(&self, tensor: &Tensor) -> Result<Tensor> {
@@ -205,7 +208,8 @@ impl DecoderBlock {
         let batch = dims[0];
         let seq = dims[2];
         let permuted = tensor.permute((0, 2, 1, 3))?;
-        permuted.reshape((batch, seq, self.hidden_dim))
+        let contiguous = permuted.contiguous()?;
+        contiguous.reshape((batch, seq, self.hidden_dim))
     }
 
     /// Forward pass through the decoder block.
