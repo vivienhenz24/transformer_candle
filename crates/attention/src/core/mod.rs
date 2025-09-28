@@ -10,7 +10,7 @@ pub mod errors;
 
 use candle_core::Tensor;
 
-pub use config::{BackendSelection, Config};
+pub use config::{BackendSelection, Config, KvConfig, PrecisionPolicy, RopeMode};
 pub use errors::AttentionError;
 
 /// Unified interface for attention kernels.

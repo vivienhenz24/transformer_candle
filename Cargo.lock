@@ -941,6 +941,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "layers"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"

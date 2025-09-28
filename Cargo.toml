@@ -4,6 +4,7 @@ members = [
     "crates/tokenizer",
     "crates/embedding",
     "crates/attention",
+    "crates/layers",
 ]
 
 [package]
