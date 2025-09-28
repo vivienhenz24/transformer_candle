@@ -80,10 +80,22 @@ impl NormImpl {
         }
 
         if let Some(weight) = &weight {
-            Self::expect_vector(weight, config.hidden_size, "weight")?;
+            checks::expect_shape("norm.weight", weight, &[config.hidden_size])?;
+            checks::expect_dtype_in(
+                "norm.weight",
+                weight,
+                &[candle_core::DType::F16, candle_core::DType::BF16, candle_core::DType::F32],
+            )?;
+            checks::expect_contiguous("norm.weight", weight)?;
         }
         if let Some(bias) = &bias {
-            Self::expect_vector(bias, config.hidden_size, "bias")?;
+            checks::expect_shape("norm.bias", bias, &[config.hidden_size])?;
+            checks::expect_dtype_in(
+                "norm.bias",
+                bias,
+                &[candle_core::DType::F16, candle_core::DType::BF16, candle_core::DType::F32],
+            )?;
+            checks::expect_contiguous("norm.bias", bias)?;
         }
 
         Ok(Self {
@@ -97,20 +109,8 @@ impl NormImpl {
         &self.config
     }
 
-    fn expect_vector(tensor: &Tensor, size: usize, name: &str) -> Result<()> {
-        let dims = tensor.dims();
-        if dims.len() == 1 && dims[0] == size {
-            Ok(())
-        } else {
-            Err(Error::Msg(format!(
-                "expected {} parameter of shape [{}], got {:?}",
-                name, size, dims
-            )))
-        }
-    }
-
     fn forward(&self, hidden: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
-        checks::expect_batch_seq_hidden(hidden, self.config.hidden_size)?;
+        checks::expect_batch_seq_hidden("norm.input", hidden, self.config.hidden_size)?;
 
         let hidden_size = self.config.hidden_size as f64;
         let mut compute = policy.cast_for_reduction(hidden)?;
