@@ -7,3 +7,18 @@ edition = "2021"
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 thiserror = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "linear_throughput"
+harness = false
+
+[[bench]]
+name = "norm_throughput"
+harness = false
+
+[[bench]]
+name = "mlp_throughput"
+harness = false
