@@ -1,7 +1,10 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     str::FromStr,
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use clap::Parser;
@@ -18,7 +21,12 @@ fn main() {
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Transformer training CLI", long_about = None)]
 struct Args {
-    #[arg(short, long, value_name = "PATH", help = "Path to training config file")]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        help = "Path to training config file"
+    )]
     config: PathBuf,
 
     #[arg(
@@ -103,7 +111,9 @@ fn apply_overrides(
     }
 
     serde_json::from_value(value).map_err(|err| {
-        TrainingError::runtime(format!("failed to deserialize config after overrides: {err}"))
+        TrainingError::runtime(format!(
+            "failed to deserialize config after overrides: {err}"
+        ))
     })
 }
 
@@ -174,7 +184,11 @@ fn parse_path(path: &str) -> Result<Vec<PathSegment>, TrainingError> {
         .collect()
 }
 
-fn assign_at_path(target: &mut Value, segments: &[PathSegment], new_value: Value) -> Result<(), TrainingError> {
+fn assign_at_path(
+    target: &mut Value,
+    segments: &[PathSegment],
+    new_value: Value,
+) -> Result<(), TrainingError> {
     if segments.is_empty() {
         *target = new_value;
         return Ok(());
@@ -184,7 +198,9 @@ fn assign_at_path(target: &mut Value, segments: &[PathSegment], new_value: Value
         if target.is_null() {
             *target = Value::Object(serde_json::Map::new());
         } else {
-            return Err(TrainingError::runtime("override root must be a JSON object"));
+            return Err(TrainingError::runtime(
+                "override root must be a JSON object",
+            ));
         }
     }
 

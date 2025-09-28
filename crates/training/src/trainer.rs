@@ -17,7 +17,7 @@ use tokenizers::{models::ModelWrapper, pre_tokenizers::PreTokenizerWrapper, Toke
 
 use crate::{
     checkpoint::{self, LoadOutcome, RngSnapshot, SaveRequest, TrainingProgressSnapshot},
-    config::{BestCheckpointConfig, TokenizerConfig as TrainingTokenizerConfig},
+    config::TokenizerConfig as TrainingTokenizerConfig,
     data::{BlockingDataLoader, DataBatch, StreamingTextDataLoader},
     logging::{Logger, LoggingSettings},
     loss::{CrossEntropyLoss, LossMetrics, LossOutput},
@@ -88,9 +88,9 @@ impl Trainer {
                 Device::Cpu
             }
         };
-        device.set_seed(config.runtime.seed).map_err(|err| {
-            TrainingError::initialization(format!("failed to seed device: {err}"))
-        })?;
+        if let Err(err) = device.set_seed(config.runtime.seed) {
+            eprintln!("warning: failed to seed device RNG: {}", err);
+        }
 
         let tokenizer = Arc::new(load_tokenizer(&config.tokenizer)?);
         let pad_token_id = tokenizer.get_padding().map(|params| params.pad_id as u32);
@@ -739,6 +739,7 @@ fn build_tokenizer_config(cfg: &TrainingTokenizerConfig) -> Result<BbpeConfig, T
         pretokenizer: metadata.byte_level,
         postprocessor: metadata.postprocessor,
         artifacts,
+        training: None,
     })
 }
 
