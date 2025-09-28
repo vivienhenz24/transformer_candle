@@ -504,6 +504,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "criterion",
+ "layers",
  "log",
 ]
 

@@ -5,6 +5,7 @@ members = [
     "crates/embedding",
     "crates/attention",
     "crates/layers",
+    "crates/model",
 ]
 
 [package]

@@ -11,6 +11,7 @@ long-context = []
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1" }
 log = "0.4"
+layers = { path = "../layers" }
 
 [dev-dependencies]
 criterion = "0.5"
