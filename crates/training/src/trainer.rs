@@ -5,7 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use candle_core::{backprop::GradStore, DType, Device, Tensor};
+use candle_core::{
+    backprop::GradStore,
+    utils::{cuda_is_available, metal_is_available},
+    DType, Device, Tensor,
+};
 use model::Model;
 use pretraining_data::corpora::StreamingCorpus;
 use tokenizer::{
@@ -81,13 +85,49 @@ impl Trainer {
 
         let resolved = config.resolve_model_hyperparameters()?;
 
-        let device = match Device::cuda_if_available(0) {
-            Ok(device) => device,
-            Err(err) => {
-                eprintln!("cuda unavailable, falling back to cpu device: {err}");
-                Device::Cpu
+        let cuda_available = cuda_is_available();
+        let metal_available = metal_is_available();
+        println!(
+            "device detection: cuda_available={} metal_available={}",
+            cuda_available, metal_available
+        );
+
+        let device = if metal_available {
+            match Device::new_metal(0) {
+                Ok(device) => {
+                    println!("device: using Metal GPU #0");
+                    device
+                }
+                Err(err) => {
+                    eprintln!(
+                        "failed to initialize metal device, falling back to CPU: {}",
+                        err
+                    );
+                    Device::Cpu
+                }
             }
+        } else if cuda_available {
+            match Device::cuda_if_available(0) {
+                Ok(device) => {
+                    println!("device: using CUDA GPU #0");
+                    device
+                }
+                Err(err) => {
+                    eprintln!("cuda reported available but initialization failed: {err}");
+                    Device::Cpu
+                }
+            }
+        } else {
+            eprintln!("no GPU backend available; using CPU");
+            Device::Cpu
         };
+
+        println!(
+            "device selected: is_cuda={} is_metal={} is_cpu={}",
+            device.is_cuda(),
+            device.is_metal(),
+            device.is_cpu()
+        );
         if let Err(err) = device.set_seed(config.runtime.seed) {
             eprintln!("warning: failed to seed device RNG: {}", err);
         }
