@@ -5,7 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use candle_core::{backprop::GradStore, DType, Device, Tensor};
+use candle_core::{
+    backprop::GradStore,
+    utils::{cuda_is_available, metal_is_available},
+    DType, Device, IndexOp, Tensor,
+};
 use model::Model;
 use pretraining_data::corpora::StreamingCorpus;
 use tokenizer::{
@@ -17,7 +21,7 @@ use tokenizers::{models::ModelWrapper, pre_tokenizers::PreTokenizerWrapper, Toke
 
 use crate::{
     checkpoint::{self, LoadOutcome, RngSnapshot, SaveRequest, TrainingProgressSnapshot},
-    config::{BestCheckpointConfig, TokenizerConfig as TrainingTokenizerConfig},
+    config::TokenizerConfig as TrainingTokenizerConfig,
     data::{BlockingDataLoader, DataBatch, StreamingTextDataLoader},
     logging::{Logger, LoggingSettings},
     loss::{CrossEntropyLoss, LossMetrics, LossOutput},
@@ -81,16 +85,52 @@ impl Trainer {
 
         let resolved = config.resolve_model_hyperparameters()?;
 
-        let device = match Device::cuda_if_available(0) {
-            Ok(device) => device,
-            Err(err) => {
-                eprintln!("cuda unavailable, falling back to cpu device: {err}");
-                Device::Cpu
+        let cuda_available = cuda_is_available();
+        let metal_available = metal_is_available();
+        println!(
+            "device detection: cuda_available={} metal_available={}",
+            cuda_available, metal_available
+        );
+
+        let device = if metal_available {
+            match Device::new_metal(0) {
+                Ok(device) => {
+                    println!("device: using Metal GPU #0");
+                    device
+                }
+                Err(err) => {
+                    eprintln!(
+                        "failed to initialize metal device, falling back to CPU: {}",
+                        err
+                    );
+                    Device::Cpu
+                }
             }
+        } else if cuda_available {
+            match Device::cuda_if_available(0) {
+                Ok(device) => {
+                    println!("device: using CUDA GPU #0");
+                    device
+                }
+                Err(err) => {
+                    eprintln!("cuda reported available but initialization failed: {err}");
+                    Device::Cpu
+                }
+            }
+        } else {
+            eprintln!("no GPU backend available; using CPU");
+            Device::Cpu
         };
-        device.set_seed(config.runtime.seed).map_err(|err| {
-            TrainingError::initialization(format!("failed to seed device: {err}"))
-        })?;
+
+        println!(
+            "device selected: is_cuda={} is_metal={} is_cpu={}",
+            device.is_cuda(),
+            device.is_metal(),
+            device.is_cpu()
+        );
+        if let Err(err) = device.set_seed(config.runtime.seed) {
+            eprintln!("warning: failed to seed device RNG: {}", err);
+        }
 
         let tokenizer = Arc::new(load_tokenizer(&config.tokenizer)?);
         let pad_token_id = tokenizer.get_padding().map(|params| params.pad_id as u32);
@@ -111,10 +151,15 @@ impl Trainer {
             config.data.shuffle_buffer_size,
         )?;
         let data_loader = BlockingDataLoader::new(data_loader);
+        println!(
+            "[training crate] data loader ready (sequence_length={} batch_size={} grad_accum={})",
+            sequence_length, config.data.batch_size, config.data.gradient_accumulation_steps
+        );
 
         let mut model_config = resolved.model.clone();
         model_config.device = device.clone();
         let model = Model::new(model_config).map_err(to_runtime_error)?;
+        println!("[training crate] model crate returned initialized model instance");
 
         let optimizer_config = OptimizerConfig::try_from(&config.optimizer)?;
         let named_parameters = model.parameters();
@@ -123,6 +168,10 @@ impl Trainer {
                 "model produced no trainable parameters",
             ));
         }
+        println!(
+            "[training crate] optimizer will track {} tensor(s)",
+            named_parameters.len()
+        );
 
         let parameter_tensors: Vec<Tensor> = named_parameters
             .iter()
@@ -494,7 +543,15 @@ impl Trainer {
             max_keep: settings.max_keep,
         };
 
-        checkpoint::save_checkpoint(request)?;
+        let descriptor = checkpoint::save_checkpoint(request)?;
+        println!(
+            "[training crate] checkpoint saved at step {} -> {}",
+            optimizer_steps,
+            descriptor.directory.display()
+        );
+        if let Some(sample) = self.sample_model_output(batch, 16, 16) {
+            println!("[training crate] model sample: {}", sample);
+        }
 
         Ok(())
     }
@@ -527,6 +584,10 @@ impl Trainer {
         let summary = self.evaluate_internal(settings.max_batches)?;
         self.logger.log_evaluation(optimizer_steps, &summary);
         self.logger.flush();
+        println!(
+            "[training crate] evaluation summary at step {}: loss={:.4} ppl={:.4} tokens={}",
+            optimizer_steps, summary.average_loss, summary.perplexity, summary.tokens
+        );
 
         if let Some(best) = settings.best {
             let improved = match self.best_eval {
@@ -546,7 +607,12 @@ impl Trainer {
                     rng: self.rng_snapshot.clone(),
                     max_keep: best.max_keep,
                 };
-                checkpoint::save_checkpoint(request)?;
+                let descriptor = checkpoint::save_checkpoint(request)?;
+                println!(
+                    "[training crate] new best checkpoint saved at {} (ppl={:.4})",
+                    descriptor.directory.display(),
+                    summary.perplexity
+                );
             }
         }
 
@@ -682,6 +748,86 @@ impl Trainer {
 
         Ok(())
     }
+
+    fn sample_model_output(
+        &self,
+        batch: &DataBatch,
+        max_prompt_tokens: usize,
+        max_new_tokens: usize,
+    ) -> Option<String> {
+        let first_seq = batch.input_ids.narrow(0, 0, 1).ok()?;
+        let ids_2d = first_seq.to_vec2::<u32>().ok()?;
+        let tokens = ids_2d.into_iter().next()?;
+        if tokens.is_empty() {
+            return None;
+        }
+
+        let prompt_len = tokens.len().min(max_prompt_tokens.max(1));
+        let mut prompt_ids: Vec<u32> = tokens.iter().copied().take(prompt_len).collect();
+        if prompt_ids.is_empty() {
+            prompt_ids.push(*tokens.first()?);
+        }
+
+        let mut context = prompt_ids.clone();
+        let mut generated: Vec<u32> = Vec::new();
+
+        for _ in 0..max_new_tokens {
+            if context.is_empty() {
+                break;
+            }
+
+            let input = Tensor::from_slice(&context, (1, context.len()), &self.device)
+                .ok()?
+                .contiguous()
+                .ok()?;
+            let logits = self.model.forward(&input).ok()?;
+            let dims = logits.dims();
+            if dims.len() != 3 {
+                break;
+            }
+            let seq_len = dims[1];
+            if seq_len == 0 {
+                break;
+            }
+
+            let last = logits.i((0, seq_len - 1)).ok()?;
+            let scores = last.to_vec1::<f32>().ok()?;
+            if scores.is_empty() {
+                break;
+            }
+
+            let mut best_idx = 0usize;
+            let mut best_val = f32::NEG_INFINITY;
+            for (idx, &score) in scores.iter().enumerate() {
+                if score > best_val {
+                    best_val = score;
+                    best_idx = idx;
+                }
+            }
+
+            let next_id = best_idx as u32;
+            if self.pad_token_id == Some(next_id) {
+                break;
+            }
+            generated.push(next_id);
+            context.push(next_id);
+            if context.len() >= self.sequence_length {
+                break;
+            }
+        }
+
+        let prompt_text = self.tokenizer.decode(&prompt_ids, true).ok()?;
+        let generated_text = if generated.is_empty() {
+            "<no new tokens>".to_string()
+        } else {
+            self.tokenizer.decode(&generated, true).ok()?
+        };
+
+        Some(format!(
+            "prompt=\"{}\" generated=\"{}\"",
+            prompt_text, generated_text
+        ))
+    }
 }
 
 fn load_tokenizer(cfg: &TrainingTokenizerConfig) -> Result<Tokenizer, TrainingError> {
@@ -739,6 +885,7 @@ fn build_tokenizer_config(cfg: &TrainingTokenizerConfig) -> Result<BbpeConfig, T
         pretokenizer: metadata.byte_level,
         postprocessor: metadata.postprocessor,
         artifacts,
+        training: None,
     })
 }
 

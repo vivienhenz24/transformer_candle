@@ -29,3 +29,9 @@ main libs used are huggingface's candle and tokenizers.
 - `cargo fmt && cargo clippy` keeps formatting and linting tidy.
 - `cargo test` runs unit/integration suites; add `--features train` when exercising tokenizer training scenarios.
 - `RUST_LOG=info cargo run --release` enables logging hooks when Candle executes inference steps.
+- `cargo run -p training --bin orchestrate -- \           ✔ │ 17:24:38 
+  --profile local \
+  --input crates/pretraining-data/input.txt \
+  --run-dir runs/local-smoke
+
+for local smoke test.

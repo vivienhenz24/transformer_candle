@@ -102,6 +102,11 @@ impl StreamingTextDataLoader {
             ));
         }
 
+        println!(
+            "[training crate::data] StreamingTextDataLoader::new seq_len={} global_batch={} grad_accum={}",
+            sequence_length, global_batch_size, gradient_accumulation_steps
+        );
+
         let micro_batches_per_step = gradient_accumulation_steps.max(1);
         let micro_batch_size = if global_batch_size % micro_batches_per_step == 0 {
             global_batch_size / micro_batches_per_step
@@ -171,6 +176,14 @@ impl StreamingTextDataLoader {
         let mut buffer = Vec::with_capacity(buffer_target);
         self.document_queue.clear();
 
+        println!(
+            "data loader: preparing epoch {} (shuffle buffer target = {}, micro batch = {}, seq_len = {})",
+            epoch,
+            buffer_target,
+            self.micro_batch_size,
+            self.sequence_length
+        );
+
         while let Some(line) = stream.next() {
             let line = line?;
             if line.is_empty() {
@@ -190,6 +203,12 @@ impl StreamingTextDataLoader {
             return Ok(false);
         }
 
+        println!(
+            "data loader: epoch {} ready ({} documents queued)",
+            epoch,
+            self.document_queue.len()
+        );
+
         self.current_epoch = epoch;
         self.prepared_epoch = epoch + 1;
         Ok(true)
@@ -208,6 +227,13 @@ impl StreamingTextDataLoader {
             }
             if !ids.is_empty() {
                 self.document_queue.push_back(ids);
+                let total = self.document_queue.len();
+                if total % 10_000 == 0 {
+                    println!(
+                        "data loader: buffered {} documents for epoch {}",
+                        total, self.prepared_epoch
+                    );
+                }
             }
         }
         Ok(())
