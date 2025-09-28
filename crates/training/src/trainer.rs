@@ -241,7 +241,10 @@ impl Trainer {
         })
     }
 
-    pub fn evaluate(&mut self, max_batches: Option<usize>) -> Result<EvaluationSummary, TrainingError> {
+    pub fn evaluate(
+        &mut self,
+        max_batches: Option<usize>,
+    ) -> Result<EvaluationSummary, TrainingError> {
         self.evaluate_internal(max_batches)
     }
 
