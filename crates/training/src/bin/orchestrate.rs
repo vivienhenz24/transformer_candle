@@ -223,6 +223,34 @@ enum Profile {
     Local,
 }
 
+impl Args {
+    fn apply_local_preset(&mut self) {
+        self.vocab_size = 4_096;
+        self.tokenizer_max_lines = Some(self.tokenizer_max_lines.unwrap_or(5_000).min(5_000));
+        self.hidden_size = 128;
+        self.intermediate_size = 512;
+        self.layers = 2;
+        self.heads = 2;
+        self.seq_len = 256;
+        self.batch_size = self.batch_size.max(1).min(4);
+        self.grad_accum = 1;
+        if self.steps.map_or(true, |steps| steps > 200) {
+            self.steps = Some(200);
+        }
+        self.learning_rate = 5e-4;
+        self.weight_decay = 0.0;
+        self.warmup_steps = Some(self.warmup_steps.unwrap_or(20).min(20));
+        self.schedule = ScheduleFlag::Constant;
+        self.checkpoint_every = self.checkpoint_every.max(10).min(50);
+        self.max_checkpoints = self.max_checkpoints.max(1).min(2);
+        self.evaluate_every = self.evaluate_every.max(10).min(50);
+        self.eval_batches = 1;
+        self.log_every = 1;
+        self.shuffle_buffer = self.shuffle_buffer.max(256).min(2_048);
+        self.precision = PrecisionFlag::Fp32;
+    }
+}
+
 #[derive(Debug)]
 enum PipelineError {
     Io(std::io::Error),
@@ -344,6 +372,10 @@ fn run() -> Result<()> {
     write_special_tokens(&special_tokens_path)?;
 
     let tokenizer_json_path = resolve_tokenizer(&args, &tokenizer_dir, &input)?;
+    println!(
+        "[orchestrator] tokenizer artifacts ready at {}",
+        tokenizer_json_path.display()
+    );
 
     let training_config = build_training_config(
         &args,
@@ -360,6 +392,15 @@ fn run() -> Result<()> {
     let config_toml = toml::to_string_pretty(&training_config)?;
     fs::write(&config_path, config_toml)?;
     println!("saved training config to {}", config_path.display());
+    println!(
+        "[orchestrator] training config assembled (model.layers={} hidden={} heads={})",
+        training_config.model.num_layers.unwrap_or_default(),
+        training_config.model.hidden_size.unwrap_or_default(),
+        training_config
+            .model
+            .num_attention_heads
+            .unwrap_or_default()
+    );
 
     let mut trainer = Trainer::new(training_config.clone())?;
 

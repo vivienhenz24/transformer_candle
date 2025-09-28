@@ -102,6 +102,11 @@ impl StreamingTextDataLoader {
             ));
         }
 
+        println!(
+            "[training crate::data] StreamingTextDataLoader::new seq_len={} global_batch={} grad_accum={}",
+            sequence_length, global_batch_size, gradient_accumulation_steps
+        );
+
         let micro_batches_per_step = gradient_accumulation_steps.max(1);
         let micro_batch_size = if global_batch_size % micro_batches_per_step == 0 {
             global_batch_size / micro_batches_per_step

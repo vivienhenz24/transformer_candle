@@ -43,16 +43,37 @@ pub use config::{ArtifactsCfg, ByteLevelCfg, Config, ModelCfg, PostCfg};
 pub use errors::{Error, Result};
 
 pub fn build_from_artifacts(cfg: &Config) -> Result<tokenizers::Tokenizer> {
+    println!(
+        "[tokenizer crate] build_from_artifacts loading tokenizer from {:?}",
+        cfg.artifacts.dir
+    );
     validate::validate_config(cfg)?;
     let tokenizer = bbpe::build_from_artifacts(cfg)?;
     validate::validate_tokenizer(&tokenizer, cfg)?;
+    println!(
+        "[tokenizer crate] build_from_artifacts finished; tokenizer vocab size = {}",
+        tokenizer.get_vocab_size(true)
+    );
     Ok(tokenizer)
 }
 
 #[cfg(feature = "train")]
 pub fn train_bbpe(cfg: &Config) -> Result<tokenizers::Tokenizer> {
+    let input_count = cfg
+        .training
+        .as_ref()
+        .map(|train| train.inputs.len())
+        .unwrap_or(0);
+    println!(
+        "[tokenizer crate] train_bbpe starting (vocab_size={}, inputs={})",
+        cfg.model.vocab_size, input_count
+    );
     validate::validate_config(cfg)?;
     let tokenizer = bbpe::train_and_build(cfg)?;
     validate::validate_tokenizer(&tokenizer, cfg)?;
+    println!(
+        "[tokenizer crate] train_bbpe complete; tokenizer vocab size = {}",
+        tokenizer.get_vocab_size(true)
+    );
     Ok(tokenizer)
 }

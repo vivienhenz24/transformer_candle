@@ -19,10 +19,16 @@ impl StreamingCorpus {
             ));
         }
 
+        println!(
+            "[pretraining-data crate] StreamingCorpus::new with {} shard(s)",
+            shards.len()
+        );
+
         Ok(Self { shards })
     }
 
     pub fn stream(&self) -> io::Result<CorpusStream> {
+        println!("[pretraining-data crate] StreamingCorpus::stream creating iterator");
         CorpusStream::new(self.shards.clone())
     }
 
@@ -55,6 +61,10 @@ impl CorpusStream {
             match File::open(path) {
                 Ok(file) => {
                     self.current_reader = Some(BufReader::new(file));
+                    println!(
+                        "[pretraining-data crate] StreamingCorpus opening shard {}",
+                        path.display()
+                    );
                     return Ok(true);
                 }
                 Err(err) if err.kind() == io::ErrorKind::NotFound => continue,

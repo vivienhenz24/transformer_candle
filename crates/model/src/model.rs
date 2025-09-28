@@ -36,6 +36,11 @@ impl Model {
         config.validate()?;
         let policy = PrecisionPolicy::from_parameter_dtype(config.dtype);
 
+        println!(
+            "[model crate] constructing decoder-only model: layers={} hidden={} heads={} rope_mode={:?}",
+            config.n_layers, config.hidden_dim, config.n_heads, config.rope_mode
+        );
+
         let embed_cfg = TokenEmbeddingConfig {
             vocab_size: config.vocab_size,
             hidden_dim: config.hidden_dim,
