@@ -285,6 +285,11 @@ impl Trainer {
         let Some(descriptor) = checkpoint::latest_checkpoint(&settings.directory)? else {
             return Ok(None);
         };
+        println!(
+            "resuming from checkpoint {} (manifest step {})",
+            descriptor.directory.display(),
+            descriptor.manifest.progress.optimizer_step
+        );
         let outcome = checkpoint::load_checkpoint(&descriptor.directory)?;
         self.apply_checkpoint(outcome)?;
         Ok(Some(descriptor))
