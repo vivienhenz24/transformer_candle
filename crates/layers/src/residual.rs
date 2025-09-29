@@ -5,7 +5,13 @@
 //! [`PrecisionPolicy::compute`] before addition when mixed precision is in play
 //! and use [`PrecisionPolicy::reduction`] for statistics such as dropout masks.
 
-use std::fmt;
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+};
 
 use candle_core::{DType, Error, Result, Tensor};
 
@@ -48,12 +54,30 @@ pub trait ResidualBlock: Send + Sync {
 }
 
 /// Dropout policy used throughout the residual stack.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum DropoutMode {
     /// Dropout is disabled (e.g. during evaluation or when probability is zero).
     Disabled,
     /// Dropout is active and uses the supplied probability and RNG seed.
-    Enabled { probability: f32, seed: u64 },
+    Enabled { probability: f32, rng: Mutex<Lcg64> },
+}
+
+impl Clone for DropoutMode {
+    fn clone(&self) -> Self {
+        match self {
+            DropoutMode::Disabled => DropoutMode::Disabled,
+            DropoutMode::Enabled { probability, rng } => {
+                let state = match rng.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                DropoutMode::Enabled {
+                    probability: *probability,
+                    rng: Mutex::new(state),
+                }
+            }
+        }
+    }
 }
 
 impl DropoutMode {
@@ -64,7 +88,7 @@ impl DropoutMode {
             p if p >= 1.0 => DropoutMode::Disabled,
             p => DropoutMode::Enabled {
                 probability: p,
-                seed,
+                rng: Mutex::new(Lcg64::new(seed)),
             },
         }
     }
@@ -73,7 +97,7 @@ impl DropoutMode {
 fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) -> Result<Tensor> {
     match mode {
         DropoutMode::Disabled => Ok(tensor.clone()),
-        DropoutMode::Enabled { probability, seed } => {
+        DropoutMode::Enabled { probability, rng } => {
             let keep_prob = 1.0 - probability;
             let dims = tensor.dims();
             if dims.len() != 3 {
@@ -86,7 +110,9 @@ fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) 
             let device = tensor.device();
             let dtype = policy.compute();
             let total = tensor.elem_count();
-            let mut rng = Lcg64::new(*seed);
+            let mut rng = rng
+                .lock()
+                .map_err(|_| Error::Msg("dropout RNG mutex poisoned".into()))?;
             let mut mask_data = Vec::with_capacity(total);
             for _ in 0..total {
                 let sample = rng.next_f32();
@@ -108,6 +134,7 @@ fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) 
 pub struct Residual {
     config: ResidualConfig,
     dropout: DropoutMode,
+    training: AtomicBool,
 }
 
 impl fmt::Debug for Residual {
@@ -123,17 +150,29 @@ impl Residual {
     /// Creates a residual helper with a deterministic dropout seed (used during tests).
     pub fn new(config: ResidualConfig, seed: u64) -> Self {
         let dropout = DropoutMode::from_probability(config.dropout_p, seed);
-        Self { config, dropout }
+        Self {
+            config,
+            dropout,
+            training: AtomicBool::new(true),
+        }
     }
 
     /// Applies dropout to `branch` using the configured policy.
     pub fn apply_dropout(&self, branch: &Tensor, policy: &PrecisionPolicy) -> Result<Tensor> {
+        if !self.training.load(Ordering::Relaxed) {
+            return Ok(branch.clone());
+        }
         apply_dropout(branch, &self.dropout, policy)
     }
 
     /// Overrides the dropout mode (useful for evaluation or tests).
     pub fn set_dropout_mode(&mut self, mode: DropoutMode) {
         self.dropout = mode;
+    }
+
+    /// Enables or disables dropout based on training mode.
+    pub fn set_training(&self, training: bool) {
+        self.training.store(training, Ordering::Relaxed);
     }
 
     /// Adds `branch` to `residual`, applying scaling when requested.
@@ -186,6 +225,7 @@ impl Residual {
 }
 
 /// Simple 64-bit linear congruential generator for deterministic dropout masks.
+#[derive(Clone)]
 struct Lcg64 {
     state: u64,
 }
@@ -280,8 +320,8 @@ mod tests {
             dropout_p: Some(0.5),
             residual_scale: None,
         };
-        let mut residual = Residual::new(config, 0);
-        residual.set_dropout_mode(DropoutMode::Disabled);
+        let residual = Residual::new(config, 0);
+        residual.set_training(false);
 
         let input = Tensor::randn(0f32, 1.0, (2, 2, 4), &device)?;
         let out = residual.apply_dropout(&input, &policy(DType::F32))?;

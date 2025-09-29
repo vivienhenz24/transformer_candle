@@ -1,8 +1,11 @@
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use attention::core::{Config as AttentionConfig, RopeMode};
-use attention::reference::ExactAttention;
+use attention::fused::FusedAttention;
 use attention::Attention;
 use candle_core::{bail, Error, Result, Tensor, Var};
 use embedding::positional::rope::{Rope, RopeConfig};
@@ -56,12 +59,13 @@ pub struct DecoderBlock {
     qkv_proj: Arc<Linear>,
     out_proj: Arc<Linear>,
     mlp: Arc<FeedForward>,
-    attention: ExactAttention,
+    attention: FusedAttention,
     attention_config: AttentionConfig,
     residual_attn: Residual,
     residual_mlp: Residual,
     rope_preapply: Option<Rope>,
     rope_mode: RopeMode,
+    training: AtomicBool,
 }
 
 impl fmt::Debug for DecoderBlock {
@@ -139,7 +143,7 @@ impl DecoderBlock {
 
         attn_cfg.dropout_p = model_cfg.attn_dropout_p;
         attn_cfg.rope_mode = model_cfg.rope_mode.clone();
-        attn_cfg.use_padding_mask = false;
+        attn_cfg.use_padding_mask = true;
 
         let rope_mode = model_cfg.rope_mode.clone();
         let rope_config = match rope_mode {
@@ -148,19 +152,19 @@ impl DecoderBlock {
         };
 
         let (attention, rope_preapply) = match rope_mode {
-            RopeMode::Off => (ExactAttention::new(), None),
+            RopeMode::Off => (FusedAttention::new(), None),
             RopeMode::OnTheFly => {
                 let cfg = rope_config
                     .clone()
                     .ok_or_else(|| Error::Msg("missing rope config".into()))?;
-                (ExactAttention::with_rope(cfg), None)
+                (FusedAttention::with_rope(cfg), None)
             }
             RopeMode::Preapply => {
                 let cfg = rope_config
                     .clone()
                     .ok_or_else(|| Error::Msg("missing rope config".into()))?;
                 let rope = Rope::new(cfg)?;
-                (ExactAttention::new(), Some(rope))
+                (FusedAttention::new(), Some(rope))
             }
         };
 
@@ -180,6 +184,7 @@ impl DecoderBlock {
             residual_mlp,
             rope_preapply,
             rope_mode,
+            training: AtomicBool::new(true),
         })
     }
 
@@ -261,6 +266,13 @@ impl DecoderBlock {
         self.parameters(scope)
     }
 
+    /// Toggle training behaviour (dropout) for this block.
+    pub fn set_training(&self, training: bool) {
+        self.training.store(training, Ordering::Relaxed);
+        self.residual_attn.set_training(training);
+        self.residual_mlp.set_training(training);
+    }
+
     /// Forward pass through the decoder block.
     pub fn forward(
         &self,
@@ -291,9 +303,14 @@ impl DecoderBlock {
             k_heads = k_rot;
         }
 
+        let mut attn_cfg = self.attention_config.clone();
+        if !self.training.load(Ordering::Relaxed) {
+            attn_cfg.dropout_p = None;
+        }
+
         let attn = self
             .attention
-            .attend(&q_heads, &k_heads, &v_heads, mask, &self.attention_config)
+            .attend(&q_heads, &k_heads, &v_heads, mask, &attn_cfg)
             .map_err(|e| Error::Msg(e.to_string()))?;
         let attn_merged = self.merge_from_heads(&attn)?;
         let projected = self.out_proj.forward(&attn_merged, &self.policy)?;

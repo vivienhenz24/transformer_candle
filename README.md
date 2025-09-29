@@ -21,63 +21,83 @@ Main libs used are huggingface's candle and tokenizers.
 - `docs/rope.md`: overview of rotary positional embeddings, configuration knobs, and caching behaviour.
 
 ### Architecture Overview
-```
-                              +---------------------+
-                              |  pretraining-data   |
-                              |  (corpus streamer)  |
-                              +----------+----------+
-                                         |
-                                         v
-                            +------------+-------------+
-                            |         training         |
-                            | (CLI, trainer, runtime)  |
-                            +----+------+------+------+
-                                 |      |      |
-                                 |      |      +-------------------------------+
-                                 |      |                                      |
-                                 |      |                           +----------v-----------+
-                                 |      |                           |      tokenizer       |
-                                 |      |                           | (load/train BBPE)    |
-                                 |      |                           +----------+-----------+
-                                 |      |                                      |
-                                 |      |                            token IDs |
-                                 |      |                                      v
-                                 |      |                           +----------+-----------+
-                                 |      +--------------------------->      model          |
-                                 |                                  | (forward pass)      |
-                                 |                                  +----+-----------+----+
-                                 |                                       |           |
-                                 v                                       |           |
-                        +--------+--------+                              |           |
-                        |   optimizer     |                              |           |
-                        | schedulers, etc |
-                        +--------+--------+                              |           |
-                                 |                                       |           |
-                                 | gradients                             |           |
-                                 v                                       |           |
-                        +--------+--------+                              |           |
-                        | gradient scaler |                              |           |
-                        +--------+--------+                              |           |
-                                 |                                       |           |
-                                 | parameters                            |           |
-                                 v                                       |           |
-                      +----------+----------+                            |           |
-                      |    layers           |<---------------------------+           |
-                      | (MLP/blocks utils)  |                                        |
-                      +----------+----------+                                        |
-                                 |                                                   |
-                                 v                                                   |
-                      +----------+----------+                                        |
-                      |   attention        |<----------------------------------------+
-                      +----------+----------+
-                                 |
-                                 v
-                      +----------+----------+
-                      |  embedding        |
-                      +-------------------+
+```text
+configs/, infra/, runs/*
+        (experiment wiring + artifacts)
+                       |
+                       v
++-----------------------------------------------------------------------+
+| crates/training (trainer CLI)                                         |
+|  config parsing - dataloading - optimizer/scheduler - checkpoints     |
++-----------+-----------------------------------------------------------+
+            | batches
+            v
+    +--------------------------+
+    | crates/pretraining-data  |
+    |  text shard streamer     |
+    +-------------+------------+
+                  | text
+                  v
+    +--------------------------+
+    | crates/tokenizer         |
+    |  HF tokenizer wrappers   |
+    +-------------+------------+
+                  | token ids
+                  v
+    +---------------------------------------------------------------+
+    | crates/model (decoder-only transformer)                       |
+    |  orchestrates crates/embedding, crates/attention, layers/*    |
+    +-------------+-------------------------------------------------+
+                  | logits
+                  v
+      downstream consumers (trainer loop, demos)
 ```
 
-`training` orchestrates the full loop: it streams batches from `pretraining-data`, pulls tokens via `tokenizer`, and invokes `model` for forward passes. The `model` crate composes building blocks from `embedding`, `attention`, and `layers`, while `training` also owns optimization, gradient scaling, checkpointing, and scheduling logic.
+```text
+Model forward pass
+
++------------------------------+          +------------------------------+
+| embedding::token             |          | final norm (layers::norm)    |
+|  token ids -> hidden states  |          |  prepares logits projection  |
++---------------+--------------+          +---------------+--------------+
+                |                                         ^
+                v                                         |
+        repeat for n_layers                               |
++-----------------------------------------------------------------------+
+| Decoder block (crates/model::block)                                  |
+|                                                                       |
+|  +------------------------------+   residual path via layers::residual|
+|  | layers::norm (prenorm)       |------------------------------------+|
+|  +---------------+--------------+                                     |
+|                  |                                                    |
+|                  v                                                    |
+|  +------------------------------+    +------------------------------+  |
+|  | attention::core/masks        |    | layers::linear (QKV/out proj)|  |
+|  |  multi-head self-attn        |    |  parameter storage and matmuls|  |
+|  |  rotary pos via embedding::  |    +------------------------------+  |
+|  |  positional::rope            |                                   |
+|  +---------------+--------------+                                   |
+|                  |                                                  |
+|                  v                                                  |
+|        residual add (layers::residual::prenorm_step)                |
+|                  |                                                  |
+|                  v                                                  |
+|  +------------------------------+                                   |
+|  | layers::norm (prenorm)       |                                   |
+|  +---------------+--------------+                                   |
+|                  |                                                  |
+|                  v                                                  |
+|  +------------------------------+                                   |
+|  | layers::mlp (FeedForward)    |  up/down projections and activation|
+|  |  hidden -> ff_ratio*hidden   |  managed via layers::linear        |
+|  +---------------+--------------+                                   |
+|                  |                                                  |
+|                  v                                                  |
+|        residual add (layers::residual::prenorm_step)                |
++-----------------------------------------------------------------------+
+```
+
+`training` orchestrates the loop: it streams batches from `crates/pretraining-data`, tokenizes via `crates/tokenizer`, and drives `crates/model`. The model stitches together `crates/embedding`, `crates/attention`, and the `crates/layers` utilities (linear, norm, residual, mlp) to implement the transformer stack end to end.
 
 ### Tokenizer Artifacts
 - Place pretrained artifacts under the directory configured in `Config.artifacts` (typically `crates/tokenizer/target/...`).

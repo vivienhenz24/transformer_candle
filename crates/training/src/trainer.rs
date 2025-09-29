@@ -323,6 +323,7 @@ impl Trainer {
     where
         F: FnMut() -> bool,
     {
+        self.model.set_training(true);
         let mut accumulated_grads: Option<GradStore> = None;
         let mut step_metrics = StepMetrics::default();
         let mut optimizer_steps: usize = self.optimizer_steps;
@@ -648,67 +649,74 @@ impl Trainer {
         &mut self,
         max_batches: Option<usize>,
     ) -> Result<EvaluationSummary, TrainingError> {
-        let corpus =
-            StreamingCorpus::new(self.config.data.validation_shards.clone()).map_err(|err| {
-                TrainingError::runtime(format!("failed to open validation corpus: {err}"))
-            })?;
+        let was_training = self.model.is_training();
+        self.model.set_training(false);
 
-        let mut loader = BlockingDataLoader::new(StreamingTextDataLoader::new(
-            corpus,
-            Arc::clone(&self.tokenizer),
-            self.device.clone(),
-            self.sequence_length,
-            self.config.data.batch_size,
-            1,
-            self.config.runtime.seed,
-            Some(0),
-        )?);
+        let result = (|| {
+            let corpus = StreamingCorpus::new(self.config.data.validation_shards.clone()).map_err(
+                |err| TrainingError::runtime(format!("failed to open validation corpus: {err}")),
+            )?;
 
-        let mut metrics = EvaluationMetrics::default();
-        let mut processed_batches = 0usize;
+            let mut loader = BlockingDataLoader::new(StreamingTextDataLoader::new(
+                corpus,
+                Arc::clone(&self.tokenizer),
+                self.device.clone(),
+                self.sequence_length,
+                self.config.data.batch_size,
+                1,
+                self.config.runtime.seed,
+                Some(0),
+            )?);
 
-        loop {
-            if let Some(limit) = max_batches {
-                if processed_batches >= limit {
-                    break;
+            let mut metrics = EvaluationMetrics::default();
+            let mut processed_batches = 0usize;
+
+            loop {
+                if let Some(limit) = max_batches {
+                    if processed_batches >= limit {
+                        break;
+                    }
                 }
+                let Some(batch) = loader.next_batch()? else {
+                    break;
+                };
+                processed_batches += 1;
+
+                let dims = batch.input_ids.dims();
+                if dims.len() < 2 {
+                    continue;
+                }
+                let seq_len = dims[1];
+                if seq_len < 2 {
+                    continue;
+                }
+
+                let inputs = batch
+                    .input_ids
+                    .narrow(1, 0, seq_len - 1)
+                    .map_err(to_runtime_error)?;
+                let targets = batch
+                    .input_ids
+                    .narrow(1, 1, seq_len - 1)
+                    .map_err(to_runtime_error)?;
+
+                let logits = self.model.forward(&inputs).map_err(to_runtime_error)?;
+
+                let loss = self.loss.compute(&logits, &targets)?;
+                let avg_loss = loss.metrics.average_loss() as f64;
+                let tokens = loss.metrics.total_tokens() as u64;
+                let correct = loss.metrics.correct_tokens() as u64;
+
+                metrics.update(avg_loss, tokens, correct);
             }
-            let Some(batch) = loader.next_batch()? else {
-                break;
-            };
-            processed_batches += 1;
 
-            let dims = batch.input_ids.dims();
-            if dims.len() < 2 {
-                continue;
-            }
-            let seq_len = dims[1];
-            if seq_len < 2 {
-                continue;
-            }
+            metrics
+                .finalize()
+                .ok_or_else(|| TrainingError::runtime("evaluation produced no tokens"))
+        })();
 
-            let inputs = batch
-                .input_ids
-                .narrow(1, 0, seq_len - 1)
-                .map_err(to_runtime_error)?;
-            let targets = batch
-                .input_ids
-                .narrow(1, 1, seq_len - 1)
-                .map_err(to_runtime_error)?;
-
-            let logits = self.model.forward(&inputs).map_err(to_runtime_error)?;
-
-            let loss = self.loss.compute(&logits, &targets)?;
-            let avg_loss = loss.metrics.average_loss() as f64;
-            let tokens = loss.metrics.total_tokens() as u64;
-            let correct = loss.metrics.correct_tokens() as u64;
-
-            metrics.update(avg_loss, tokens, correct);
-        }
-
-        metrics
-            .finalize()
-            .ok_or_else(|| TrainingError::runtime("evaluation produced no tokens"))
+        self.model.set_training(was_training);
+        result
     }
 
     fn apply_checkpoint(&mut self, outcome: LoadOutcome) -> Result<(), TrainingError> {
@@ -795,6 +803,14 @@ impl Trainer {
     }
 
     fn sample_model_output(&self, batch: &DataBatch) -> Option<String> {
+        let was_training = self.model.is_training();
+        self.model.set_training(false);
+        let result = self.sample_model_output_impl(batch);
+        self.model.set_training(was_training);
+        result
+    }
+
+    fn sample_model_output_impl(&self, batch: &DataBatch) -> Option<String> {
         let first_seq = batch.input_ids.narrow(0, 0, 1).ok()?;
         let ids_2d = first_seq.to_vec2::<u32>().ok()?;
         let tokens = ids_2d.into_iter().next()?;

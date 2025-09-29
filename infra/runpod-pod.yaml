@@ -1,0 +1,29 @@
+# Example RunPod Cloud Pod spec for training the 2B parameter model.
+kind: Pod
+name: transformer-2b
+imageName: runpod/pytorch:2.1.0-cuda12.1-devel
+gpuType: "NVIDIA A100-PCIE-80GB"
+gpuCount: 1
+minVcpus: 16
+minMemory: 120
+volumeMounts:
+  - volumeName: transformer-shared
+    mountPath: /workspace
+ports:
+  - containerPort: 22
+    protocol: tcp
+  - containerPort: 6006
+    protocol: tcp
+env:
+  - name: RUST_LOG
+    value: info
+  - name: HF_DATASETS_CACHE
+    value: /workspace/cache/hf
+command:
+  - /bin/bash
+  - -lc
+  - |
+      set -euo pipefail
+      cd /workspace/transformer
+      cargo build --release
+      cargo run -p training --bin train -- --config configs/runpod_2b.yaml
