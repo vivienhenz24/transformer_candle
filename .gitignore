@@ -15,7 +15,7 @@ Thumbs.db
 
 # Logs
 *.log
-
+runs/
 
 # Added by cargo
 crates/tokenizer/target/

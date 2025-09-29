@@ -1,10 +1,10 @@
 ## transformer_candle
 
-hi!
+Hi!
 
-We ([@SamC1249](https://github.com/SamC1249) & [@vivienhenz24](https://github.com/vivienhenz24)) are building a transformer from scratch...but in rust. And no, there is no rational reason for building a transformer in rust. We do a little trolling ;)
+We ([@SamC1249](https://github.com/SamC1249) & [@vivienhenz24](https://github.com/vivienhenz24)) are building a transformer from scratch...but in rust. And no, there is no rational reason for building a transformer in rust.
 
-main libs used are huggingface's candle and tokenizers.
+Main libs used are huggingface's candle and tokenizers.
 
 
 
@@ -101,3 +101,12 @@ main libs used are huggingface's candle and tokenizers.
   --run-dir runs/local-smoke
 
 for local smoke test.
+
+
+ cargo run -p training --bin train -- --config configs/m3_medium.yaml
+
+ for full m3 run
+
+  cargo run -p training --bin train -- --config configs/m3_medium.yaml --resume
+
+  for resume a run from last checkpoint
