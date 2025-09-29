@@ -21,8 +21,26 @@ runs/
 crates/tokenizer/target/
 /target
 
-# Hugging Face
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Hugging Face & ML Data
 .env
 /data/raw_hf
-/venv 
-crates/pretraining-data/venv 
+/data/raw
+/venv
+crates/pretraining-data/venv
+*.safetensors
+*.bin
+*.pt
+*.pth
+models/
+datasets/
+wandb/
