@@ -41,11 +41,12 @@ impl Default for DatasetMixConfig {
 impl Default for PreprocessConfig {
     fn default() -> Self {
         let mut dataset_weights = HashMap::new();
-        dataset_weights.insert("local".to_string(), 0.1);
-        dataset_weights.insert("openwebtext".to_string(), 0.5);
+        dataset_weights.insert("local".to_string(), 0.15);
+        dataset_weights.insert("openwebtext".to_string(), 0.4);
         dataset_weights.insert("wikipedia".to_string(), 0.2);
         dataset_weights.insert("books".to_string(), 0.1);
         dataset_weights.insert("code".to_string(), 0.1);
+        dataset_weights.insert("paulgraham".to_string(), 0.05);
 
         Self {
             raw_data_dir: PathBuf::from("data/raw"),
@@ -311,10 +312,11 @@ fn process_hf_datasets(
 
     // Define dataset patterns and their weights
     let dataset_patterns = vec![
-        ("openwebtext", config.dataset_weights.get("openwebtext").unwrap_or(&0.5)),
+        ("openwebtext", config.dataset_weights.get("openwebtext").unwrap_or(&0.4)),
         ("wikipedia", config.dataset_weights.get("wikipedia").unwrap_or(&0.2)),
         ("books", config.dataset_weights.get("books").unwrap_or(&0.1)),
         ("code", config.dataset_weights.get("code").unwrap_or(&0.1)),
+        ("paulgraham", config.dataset_weights.get("paulgraham").unwrap_or(&0.05)),
     ];
 
     for (dataset_name, weight) in dataset_patterns {
@@ -431,7 +433,7 @@ pub fn check_hf_datasets_available(hf_dir: &Path) -> HashMap<String, usize> {
         return available;
     }
 
-    let datasets = ["openwebtext", "wikipedia", "books", "code"];
+    let datasets = ["openwebtext", "wikipedia", "books", "code", "paulgraham"];
 
     for dataset in datasets {
         let pattern = format!("{}_chunk_", dataset);

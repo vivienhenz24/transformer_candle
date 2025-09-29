@@ -58,6 +58,7 @@ cargo run --bin preprocess -- --mixed
 | `wikipedia` | ~20GB | Wikipedia articles | Factual knowledge |
 | `books` | ~4GB | Long-form narrative text | Language structure |
 | `code` | Variable | Programming code in multiple languages | Code understanding |
+| `paulgraham` | ~2MB | Paul Graham's startup essays | Entrepreneurship, tech insights |
 
 ## 🛠️ Configuration Options
 
@@ -67,11 +68,12 @@ Edit the weights in your preprocessing config to control dataset proportions:
 
 ```rust
 // In your code, these are the default weights:
-local_data_weight: 0.1,      // 10% - Your HBS articles
-openwebtext_weight: 0.5,     // 50% - Web text
+local_data_weight: 0.15,     // 15% - Your HBS articles
+openwebtext_weight: 0.4,     // 40% - Web text
 wikipedia_weight: 0.2,       // 20% - Wikipedia
 books_weight: 0.1,           // 10% - Books
 code_weight: 0.1,            // 10% - Code
+paulgraham_weight: 0.05,     // 5% - Paul Graham essays
 ```
 
 ### Memory Management
@@ -85,10 +87,10 @@ For large datasets, the system automatically:
 
 ### Example 1: Quick Test with Small Data
 ```bash
-# Download small sample
-python scripts/download_datasets.py --datasets wikipedia --max-examples 10000 --chunk-size 1000
+# Download small sample with Paul Graham essays
+python scripts/download_datasets.py --datasets paulgraham wikipedia --max-examples 1000 --chunk-size 100
 
-# Process mixed data
+# Process mixed data (HBS + PG + Wikipedia)
 cargo run --bin preprocess -- --mixed
 ```
 
@@ -101,7 +103,17 @@ python scripts/download_datasets.py --datasets openwebtext wikipedia
 cargo run --bin preprocess -- --mixed
 ```
 
-### Example 3: Code-Focused Model
+### Example 3: Startup/Business-Focused Model
+```bash
+# Download business-focused content
+python scripts/download_datasets.py --datasets paulgraham wikipedia --max-examples 50000
+
+# This gives you: HBS articles + Paul Graham essays + Wikipedia
+# Perfect for business/startup domain knowledge
+cargo run --bin preprocess -- --mixed
+```
+
+### Example 4: Code-Focused Model
 ```bash
 # Download code + some text
 python scripts/download_datasets.py --datasets code openwebtext --max-examples 100000
