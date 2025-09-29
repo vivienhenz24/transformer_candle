@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any
 from datasets import load_dataset, Dataset
 from tqdm import tqdm
 import time
+<<<<<<< HEAD
 from huggingface_hub import login
 
 class DatasetDownloader:
@@ -29,6 +30,14 @@ class DatasetDownloader:
         else:
             print("ℹ️  No authentication - using public datasets only")
 
+=======
+
+class DatasetDownloader:
+    def __init__(self, output_dir: str = "data/raw_hf"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
     def download_openwebtext(self, max_examples: Optional[int] = None, chunk_size: int = 10000):
         """Download OpenWebText dataset in chunks."""
         print("🔄 Downloading OpenWebText dataset...")
@@ -61,6 +70,7 @@ class DatasetDownloader:
         print(f"✅ Downloaded {total_examples} examples in {chunk_num + 1} chunks")
         return chunk_num + 1
 
+<<<<<<< HEAD
     def download_paul_graham_essays(self, max_examples: Optional[int] = None, chunk_size: int = 10000):
         """
         Download Paul Graham Essays dataset in chunks.
@@ -101,6 +111,8 @@ class DatasetDownloader:
         print(f"✅ Downloaded {total_examples} examples in {chunk_num + 1} chunks")
         return chunk_num + 1
 
+=======
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
     def download_wikipedia(self, language: str = "en", max_examples: Optional[int] = None, chunk_size: int = 5000):
         """Download Wikipedia dataset in chunks."""
         print(f"🔄 Downloading Wikipedia ({language}) dataset...")
@@ -228,6 +240,7 @@ class DatasetDownloader:
         print(f"✅ Downloaded code in {total_chunks} total chunks")
         return total_chunks
 
+<<<<<<< HEAD
     def download_private_dataset(self, dataset_name: str, max_examples: Optional[int] = None, chunk_size: int = 5000):
         """Download a private dataset by name."""
         print(f"🔄 Downloading private dataset: {dataset_name}...")
@@ -273,6 +286,8 @@ class DatasetDownloader:
             print("💡 Make sure you have access to this dataset and are authenticated")
             return 0
 
+=======
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
     def _save_chunk(self, dataset_name: str, chunk_num: int, texts: list):
         """Save a chunk of texts to a file."""
         filename = f"{dataset_name}_chunk_{chunk_num:04d}.txt"
@@ -314,17 +329,24 @@ def main():
                        help="Maximum examples per dataset (for testing)")
     parser.add_argument("--chunk-size", type=int, default=10000,
                        help="Number of examples per chunk file")
+<<<<<<< HEAD
     parser.add_argument("--private-dataset", type=str,
                        help="Download a specific private dataset by name (e.g., 'username/dataset-name')")
     parser.add_argument("--hf-token", type=str,
                        help="Hugging Face token for private datasets")
+=======
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
 
     args = parser.parse_args()
 
     if "all" in args.datasets:
         args.datasets = ["openwebtext", "wikipedia", "books", "code"]
 
+<<<<<<< HEAD
     downloader = DatasetDownloader(args.output_dir, args.hf_token)
+=======
+    downloader = DatasetDownloader(args.output_dir)
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
     dataset_info = {}
 
     print(f"📥 Starting dataset download to: {args.output_dir}")
@@ -335,12 +357,15 @@ def main():
 
     start_time = time.time()
 
+<<<<<<< HEAD
     # Handle private dataset download
     if args.private_dataset:
         print(f"🔒 Downloading private dataset: {args.private_dataset}")
         chunks = downloader.download_private_dataset(args.private_dataset, args.max_examples, args.chunk_size)
         dataset_info[args.private_dataset] = {"chunks": chunks, "chunk_size": args.chunk_size}
 
+=======
+>>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
     if "openwebtext" in args.datasets:
         chunks = downloader.download_openwebtext(args.max_examples, args.chunk_size)
         dataset_info["openwebtext"] = {"chunks": chunks, "chunk_size": args.chunk_size}

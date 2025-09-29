@@ -1,0 +1,53 @@
+Why Great Ideas Get Stuck in Universities
+Academic institutions incubate novel ideas and are important innovation partners for companies, but getting products out of universities and onto the market can be challenging. 
+
+By Ben Rand on July 26, 2024
+
+Entrepreneurs must overcome many barriers to get discoveries to market, but academic researchers face an additional one they might not realize: themselves.
+
+Academics tend to develop a myopic focus on the unique expertise they spend their lives developing, but that narrow scope can become a commercial hindrance. A recent study of more than 500 biomedical startups suggests that ventures rooted in the core research of their founders have a more challenging time reaching key measures of success, such as raising capital or attracting a buyer.
+
+You decide to start a company, and while figuring it all out, you discover that it’s not the right technology for the problem.
+
+Academic researchers are “almost too married to their ideas and technologies, but I don’t blame them,” says Maria Roche, assistant professor in the Strategy Unit at Harvard Business School, and one of the study’s authors. “You’ve been working on this research your whole life and are convinced that it’s awesome. Then you decide to start a company, and while figuring it all out, you discover that it’s not the right technology for the problem. And then pivoting gets hard because that’s all you’ve known.”
+
+The study provides valuable insights for founders and universities as they invest more into the higher-risk, early-stage research that often results in meaningful innovation. Companies have long teamed with academia, but such partnerships might become more important to industries like biotechnology, which have been affected by interest rate-related volatility in venture capital funding and mergers and acquisitions activity.
+
+Roche conducted the analysis with Justine Boudou, a doctoral student at HBS.
+
+Academic chops don’t translate to success
+The 510 startups in the study, concentrated primarily in California, Massachusetts, Pennsylvania, North Carolina, Maryland, and Michigan, were all established between 2005 and 2015 to allow time for the researchers to study how the firms fared in getting to market.
+
+The researchers focused explicitly on biomedical ventures because they typically seek to grow through acquisition. Each startup was required to have at least one academic founder and one existing patent, which lowered the number of companies in the study to a total of 308, involving more than 500 scholars.
+
+Roche and Boudou measured how closely the scope of the startups’ patents reflected their founders’ research. Their surprising finding: Firms that built their businesses around the core research interests of their founders struggled the most.
+
+Specifically, Roche and Boudou found that for every 10 percentage points those two factors—patents and founder research—were more aligned, startups were:
+
+4.2 percent less likely to land $10 million or more in investment capital within five years. This represents a significant reduction given that the average likelihood of raising this amount is 25 percent.
+2.5 percent less likely to find an acquisition partner. This represents a notable decrease considering the average likelihood of finding an acquisition partner is 8 percent.
+No more or less likely to go through an IPO.
+Landing funding and finding a buyer are considered key milestones of entrepreneurial success, making those metrics particularly telling, the researchers say.
+
+Too narrow a focus?
+Roche and Boudou considered several explanations for their findings: whether the technology driving the startup was too new or not good enough, and whether the founders took too central a role in controlling or managing the company.
+
+Ultimately, they ruled out these factors for another, more counterintuitive, conclusion: An overreliance on founders’ specialized knowledge narrows startups’ options as they seek the right paths to commercialize their work.
+
+It’s not like they are doing worse science, have worse patents, or are just not ready and putting things out too soon.
+
+Roche says that specialization can give rise to standalone products that are too narrow to appeal to potential acquirers or too difficult for venture capitalists to evaluate against other potential investments.
+
+But it’s not the quality of the knowledge that’s at issue, Roche says. The startups’ focus “makes it difficult for them to be integrated once they are acquired,” Roche says. “So they are not the most attractive targets—let’s put it that way. But it’s not like they are doing worse science, have worse patents, or are just not ready and putting things out too soon.”
+
+The researchers add that outliers—specialized startups that found further success in the market—are rare, and mainly involve companies purchased for their intellectual property.
+
+Lessons for universities
+The study’s findings are significant as university research expenditures climb to record levels, reaching more than $91 billion in 2022, according to the Association of University Technology Managers. Universities created over 1,100 startups in the same year, an 8 percent increase over 2021.
+
+If they’re being nudged to do more commercial work, you might not notice the consequences in the next five to 10 years
+
+In attempting to fill the commercialization gap left by companies, “universities will have to be very careful that they don’t shift too far into doing the commercial work,” Roche says. “Because what academia has afforded for so many decades is the freedom to do crazy stuff, curiosity-driven research, research that might not make sense to the layperson or at first glance.”
+
+She adds an additional note of caution: “If they’re being nudged to do more commercial work, you might not notice the consequences in the next five to 10 years, but maybe in 20 or 30 years. And we’re already seeing a decline in breakthrough science.”
+

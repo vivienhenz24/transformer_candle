@@ -3,4 +3,11 @@ name = "pretraining-data"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "preprocess"
+path = "src/bin/preprocess.rs"
+
 [dependencies]
+
+[dev-dependencies]
+tempfile = "3.0"

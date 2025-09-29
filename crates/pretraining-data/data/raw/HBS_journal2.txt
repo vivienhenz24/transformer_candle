@@ -1,0 +1,72 @@
+The following is a lightly edited excerpt from the book The Experimentation Machine: Finding Product-Market Fit in the Age of AI, written by Jeffrey Bussgang.
+
+There’s a running joke in Startupland that artificial intelligence (AI) is going to replace all humans inside a business: the founders, product managers, salespeople, engineers, and certainly the lawyers. While some tasks will be automated, I don’t expect fully autonomous startups anytime soon. But massive changes are happening, and some folks will be left behind. AI may not replace the startup founder, but startup founders who use AI are going to replace founders who don’t.
+
+When ChatGPT debuted in late 2022, I knew we had reached a point of no return.
+
+Generative AI—powered by large language models (LLMs) to create strikingly creative and human content in text, code, and visuals—is an incredible example of science fiction becoming science fact. From the consumer’s perspective, computers suddenly became capable of interacting in ways so humanlike that the difference between human and machine was imperceptible. They could tell you bedtime stories, generate cover letters, code up a website, and even paint you a Monet. The famous Turing test—a capabilities threshold to ascertain if machines could pass as human—was shattered.
+
+Founders who use AI will replace founders who don’t.
+
+Gen AI’s rate of adoption is nearly as staggering as its creative output. It took the world wide web seven years to reach 100 million users. ChatGPT reached that milestone in just two months. As of this writing, ChatGPT (still the largest AI platform) has over 300 million weekly active users in just two years since its launch, and it continues to grow by double digits every quarter. For businesses, generative AI represents the largest boost in productivity and opportunity since the Internet. I have become fascinated with how to apply this radical new technology in startups. AI has become a focal point in my Harvard Business School (HBS) MBA course, Launching Tech Ventures.
+
+We’ve also gone all in on AI at Flybridge, rewriting our investment thesis to exclusively focus on “AI-forward” startups across industries. In particular, I am interested in how startup founders and their teams can use AI to accelerate the search for product market fit, and later, to scale. Like a catalyst in a chemical reaction, AI tools have the power to turbocharge startups through the learning and growth curves, creating bigger and better outcomes, faster than we ever thought possible. Founders who use AI will replace founders who don’t.
+
+But ChatGPT and other AI tools are just that—tools in the startup toolbox. Founders still need to answer the same fundamental questions they always have:
+
+Who is my customer?
+What problem can I help them solve?
+How do I make money and build a sustainable, profitable business?
+To answer these questions, I have long advocated for a scientific approach to building startups. Founders should create hypotheses, run experiments, and implement the results. That’s why my preferred mental model for startups is the Experimentation Machine.
+
+An operating model for startups
+A startup founder’s job is to build an experiment-driven organization, i.e., an Experimentation Machine.
+
+The goal is to test and probe for answers to the most fundamental questions of any business:
+
+Who is my ideal customer?
+What do they want and need?
+How do I deliver it to them?
+How do I find more ideal customers?
+How do I make money and build a sustainable business?
+The goal as an early-stage founder is to maximize your learning by testing assumptions and refining your ideas. The key is to do this quickly and successfully enough to find product-market fit before you run out of money. AI is the ultimate experiment accelerator for startups.
+
+Building an Experimentation Machine requires a basic understanding of the scientific method. It starts with asking a question or identifying a problem: Why is it so hard to get a haircut? Next is research: How are things done today? What are the alternatives and workarounds to this problem? What do people actually want?
+
+Founders need to make hypotheses for every part of their business: customer value proposition, go-to-market, technology infrastructure, and monetization plan.
+
+After conducting deep customer discovery—the process of thoroughly researching potential customers’ needs and problems—the founding team creates a hypothesis or an educated guess. Founders need to make hypotheses for every part of their business: customer value proposition, go-to-market, technology infrastructure, and monetization plan. A hypothesis must be falsifiable. Can you definitively prove it to be correct or incorrect?
+
+Then you identify the most important hypothesis and design an experiment to test it. The strategy of test selection boils down to three essential questions:
+
+Which business model component is most controversial, and what is the essential hypothesis for that component?
+What is the key milestone I need to achieve that will lead to my next valuation inflection point, helping unlock more capital from investors?
+Where does the greatest risk exist in my business model, and what does the flow of dependencies look like?
+The answers depend on the startup and their stage of growth. However, when starting from scratch or running the Experimentation Machine framework for the first time, startups should run tests in the following sequence:
+
+Customer Value Proposition experiments
+Who are your ideal customers, what do they want, and how does the startup deliver? The primary business function under scrutiny is the product.
+
+How to use AI to run CVP experiments:
+
+Ask AI to simulate the role of target customers or expert stakeholders.
+Simulate customer conversations to learn about the most important features in a minimum viable product (MVP).
+Use AI coding tools to create an MVP in 1/10th the time.
+Go-to-market experiments
+What is the ideal sales model? What are the most efficient customer acquisition channels? What is your best growth flywheel? Product, sales, and growth are the key business functions to test in this stage.
+
+How to use AI to run go-to-market experiments:
+
+Develop 10 times more marketing content to test across channels.
+Create an AI-powered, interactive customer persona to test new messaging and positioning concepts.
+Personalize outreach at scale.
+Business model/profit formula experiments
+How do you monetize and price? How do you improve your margins? Are you maximizing your potential valuation? Marketing, customer success, and business development now enter the picture.
+
+How to use AI to run business model experiments:
+
+Simulate customer surveys to evaluate pricing decisions
+Analyze customer feedback to identify best-fit customer segments
+This sequence answers the most fundamental questions about your startup in the order needed to build a functioning business. Your monetization strategy does not matter if you can’t attract customers, and your go-to-market strategy is useless without having a strong customer value proposition.
+
+A startup founder’s job is that of Chief Experimentation Officer. You must guide your team to adopt the scientific method and run the Experimentation Machine operating model diligently. With a bit of luck and a lot of hard work, you may pave a highway that leads your startup to scale and financial exit.

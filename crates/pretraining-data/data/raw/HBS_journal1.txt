@@ -1,0 +1,65 @@
+Inside One Startup's Journey to Break Down Hiring (and Funding) Barriers
+In a case study, Paul Gompers explores the challenges a social justice startup encounters in helping the formerly incarcerated, as well as lessons for other entrepreneurs.
+
+Featuring Paul A. Gompers. By Avery Forman on November 12, 2024.
+
+Launching a social justice startup takes more than a moving story. Ask Harley Blakeman, the 32-year-old founder of Honest Jobs.
+
+He has perfected his elevator pitch, but that doesn’t mean launching his business has been easy. A once-homeless teenager from Florida, Blakeman turned to selling drugs—a lucrative gig that taught him a lot about business but ultimately landed him in prison.
+
+Once he’d served his 14 months, Blakeman sought to build a career and turn his life around. But when his criminal record kept him from getting a job, he started wondering: How can formerly incarcerated people truly reintegrate into society if few firms will hire them? And, how can society—especially at a time of rising prices and low unemployment—afford to exclude the roughly one in three working Americans with criminal records from the economy? The roadblocks Blakeman encountered in finding a job would end up providing the inspiration for his next business opportunity: a tech business that put “justice-involved” individuals to work.
+
+"Tech startups are so concentrated in a small number of places with a small number of types of people, so there’s innovation that doesn’t happen."
+
+Yet as a recent Harvard Business School case study details, big-name investors say they want to take bets on social justice startups like Blakeman’s, but few actually take the plunge—especially if the entrepreneurs at their helm don’t come from the same polished backgrounds and high-status schools as all the well-known venture capitalists working on the two coasts. Paul Gompers, the Eugene Holman Professor of Business Administration at HBS, met Blakeman through a former student as he created a course called “Entrepreneurship Outside the Valley” to explore how people can overcome entrepreneurial obstacles and leverage their backgrounds to build their businesses and generate funding.
+
+“Harley’s business is one that really no one else would have started because it’s his past experience that created this. Tech startups are so concentrated in a small number of places with a small number of types of people, so there’s innovation that doesn’t happen,” says Gompers. “This is true [for] women, its true for underrepresented minorities, and it’s true for the formerly incarcerated as well.”
+
+Gompers says the case poses important questions for coastal investors to wrestle with as they champion diversity, equity, and inclusion goals and seek to make an impact beyond the balance sheet. He encourages investors to ask: “How do we make startups more accessible, both geographically and among different groups? How do we think about creating a playing field where people who don’t grow up with a silver spoon in their mouths have an opportunity to do something like Harley’s doing?”
+
+A prison conviction leads to multiple employment rejections
+After losing his father at age 15, Blakeman fell into hard drug use. After he was incarcerated in a Georgia prison and newly sober, Blakeman faced a harsh reality.
+
+Returning to Florida after serving his time would likely land him back in jail. Rekindled relationships with an aunt and grandmother in Ohio inspired him to turn his life around and move to the Midwest after his release instead. He spent his remaining time behind bars working as a janitor, reading business books, and obtaining his high school equivalency diploma.
+
+Blakeman went on to earn a business degree at Ohio State University, graduating with honors. However, he was rejected for the more than 80 positions he interviewed for after background checks uncovered his criminal record. He was caught in a web of rules that differ across states and industries that exclude formerly incarcerated individuals from holding jobs.
+
+In an interview with Working Knowledge, Blakeman recalls: “I’m a white male, and finding a job was a huge pain point for me. I can’t imagine the challenges people of color, low-income, and those with lack of access to education and transportation face after prison.”
+
+The manufacturer Owens Corning finally gave him a chance. At the same time, he set out to solve the problem his experience revealed. Blakeman spent weekends building an online community for incarcerated people and wrote a book, Grit: How to Get a Job and Build a Career with a Criminal Record.
+
+Launching a tech startup to help the formerly incarcerated
+Blakeman started Honest Jobs in 2020, personally helping 30 formerly incarcerated people rebuild skills and find jobs while working to identify the difficulties of job seekers and employers. As remote work surged during the COVID-19 pandemic, unemployment hovered below 4 percent, and many employers struggled to fill openings.
+
+"Harley has to build a team, but doesn’t have all the skills necessary to do it."
+
+For the formerly incarcerated, the job market was much different, with unemployment at 27 percent unemployment and recidivism at almost 77 percent in 2022. Some $88 billion was spent per year to run the sprawling prison system in the United States, with the New York University Center for Justice estimating some $132 billion in annual household income lost for people convicted of felonies.
+
+Honest Jobs experienced hiring and fundraising challenges early on. Blakeman struck out with a business partner he ultimately bought out, plus he hired and then laid off senior people in business development and marketing. Gompers reflected that it can be hard for founders to translate their passion and vision to their hires, saying: “Harley has to build a team, but doesn’t have all the skills necessary to do it.”
+
+The hustle to woo investors
+For example, Blakeman needed to learn how to talk to potential investors.
+
+“When I was starting the business, it wasn’t in my vocabulary to raise money,” says Blakeman. “And that speaks to part of the problem. If you grow up in a place that’s not San Francisco or New York, you maybe don’t know a single person who knows that language. I was limited by what my mind could think to Google.”
+
+He learned quickly to orient his business within the broader needs of the economy, linking his pitch to the job market and a criminal justice system that’s bloated and costly to taxpayers.
+
+By 2022, Blakeman’s team developed ConflixAI, using artificial intelligence to review the skills and qualifications of job seekers and suggest matches with employers based on the nature of the crime, the amount of time since the conviction, and the nature of the job. For instance, “a low rating might be displayed for an individual convicted of credit card theft who was considering applying for a financial services customer support role,” Blakeman says.
+
+A pitch to the right person at the right time at a bar led to a $100,000 angel investment. Diversifying his business, Blakeman started to work with prisons to put his search tools into the hands of inmates before their release. Honest Jobs offered several price points, ultimately building to 1,500 employers, 146,000 job seekers, and $3 million in investments from Midwest- and Rocky Mountain-based venture capital firms.
+
+Blakeman’s product should have a natural path to expansion by helping companies meet diversity, equity, and inclusion goals and helping investors achieve the “social” prong of their environmental, social, and governance aspirations. But Honest Jobs still struggles to attract funding from firms beyond the Midwest and Rocky Mountain regions.
+
+“I was making it to the final round of discussions with a lot of well-known venture capital firms, but then none of them would take the lead and commit,” he says. “I don’t know if I need their funding to be successful, but I understand the influence they have on startups and their ability to raise future financing.”
+
+Eight tips to democratize opportunity
+Blakeman says his experience has taught him plenty about overcoming obstacles to attract investors and build a successful business, all without some of the advantages of other entrepreneurs. He and Gompers offer this advice to “democratize opportunity” for startups.
+
+Don’t ask these questions of investors, Gompers says: “Did you go to the same school? Did you work at the same firms? Do you know the same people?” These questions tend to narrow the worldview of investment opportunities to people who look like the investor.
+Make the pitch personal. “Share your story. Be vocal on social media. Intentionally say, ‘Here’s my experience—being a homeless teenager, going to prison,’ instead of pitching them on my company,” says Blakeman.
+Once you’ve told your story, connect the dots to the social problem that needs to be fixed. “This is a tragedy that affects many more people than me,” Blakeman says. “People have an idea of what this looks like but they’re wrong. So really cracking that narrative.”
+Stretch the timeline for success. Many venture capital models plan on a five- to seven-year timeline to succeed or fail. But purpose-built companies might need longer. “You want a founder who will fight and die for the company,” says Blakeman. “If a startup takes 10 years to get to $100 million, I’d argue that’s still a good outcome.”
+Stay close to your mission. “My confidence with investors goes up every time I talk to one of our users whose life we changed,” says Blakeman. “I forget when I’m sitting on Zoom calls that people’s lives are changing. That’s not reflected in our revenue yet.”
+Leverage the organization’s impact to attract talent. Blakeman says, “Expectations of wealth can be balanced with expectations of this new generation of employees, who believe it’s almost cooler to be able to say, ‘Look at the people I helped or the impact I have had,’ instead of: ‘Look at my Ferrari in my four-car garage.’”
+Incentives matter in inspiring employees to embrace the mission and work hard. “We want to make sure the incentives are aligned. Private markets do a much better job than the government in solving these kinds of really important societal problems. Identify the metrics that are a measure of success and compensate on those,” says Gompers.
+Keep an open mind when building a team. “For someone like me, we need to pull in people with complementary skills who know something we don’t know,” Blakeman says. “That can be hard. People who come from nothing tend to have a little bit of a protective nature because they don’t live in a world of surplus or opportunity everywhere. So when they do finally get an opportunity, they’re a little worried to let someone from New York or Boston or San Francisco come into their executive team.” However, he says, that person’s experience and expertise may be just what a company needs to succeed, so it’s important to keep an open mind.
