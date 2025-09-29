@@ -20,3 +20,8 @@ Thumbs.db
 # Added by cargo
 crates/tokenizer/target/
 /target
+
+# Hugging Face
+.env
+/data/raw_hf
+/venv 
