@@ -1,5 +1,6 @@
 # Rust
 /target/
+Cargo.lock
 
 # IDE
 .vscode/
@@ -15,9 +16,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Training artifacts
-/runs/
-
 
 # Added by cargo
 crates/tokenizer/target/
@@ -27,3 +25,4 @@ crates/tokenizer/target/
 .env
 /data/raw_hf
 /venv 
+crates/pretraining-data/venv 
