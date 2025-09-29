@@ -32,11 +32,8 @@ source venv/bin/activate   # Linux/Mac
 python scripts/download_datasets.py --datasets openwebtext --max-examples 50000
 ```
 
-<<<<<<< HEAD
 Note: For private databases, you should set up Hugging Face authentication. This is simple. Make an account, create an access token, and put into .env as HUGGINGFACE_HUB_TOKEN.
 
-=======
->>>>>>> 9ce145a (Raw Data + Retrieve Data Script - V1 - Much work needed)
 **Production Scale:**
 ```bash
 # Download full datasets (this will take time and space!)
