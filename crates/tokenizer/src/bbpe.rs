@@ -1,6 +1,4 @@
-use crate::artifacts::{
-    load_bpe_from_vocab_merges, load_tokenizer_from_json, resolve_paths,
-};
+use crate::artifacts::{load_bpe_from_vocab_merges, load_tokenizer_from_json, resolve_paths};
 use crate::config::Config;
 use crate::errors::{Error, Result};
 use crate::postprocessor::maybe_build_template;

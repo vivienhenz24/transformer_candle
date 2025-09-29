@@ -2,6 +2,7 @@ use crate::config::ArtifactsCfg;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[cfg_attr(not(feature = "train"), allow(dead_code))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactManifest {
     pub cfg_hash: String,

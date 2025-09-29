@@ -3,4 +3,19 @@ name = "embedding"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+long-context = []
+
 [dependencies]
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+log = "0.4"
+layers = { path = "../layers" }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "rope"
+harness = false

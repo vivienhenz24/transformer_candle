@@ -1,0 +1,53 @@
+[model]
+hidden_size = 512
+intermediate_size = 2048
+num_attention_heads = 8
+num_key_value_heads = 8
+num_layers = 8
+max_position_embeddings = 1024
+
+[tokenizer]
+tokenizer_json = "runs/local/tokenizer/tokenizer.json"
+special_tokens = "runs/local/special_tokens.txt"
+
+[data]
+train_shards = ["crates/pretraining-data/input.txt"]
+validation_shards = ["crates/pretraining-data/input.txt"]
+batch_size = 16
+gradient_accumulation_steps = 1
+shuffle_buffer_size = 16384
+
+[optimizer]
+algorithm = "adam_w"
+learning_rate = 0.0003000000142492354
+weight_decay = 0.10000000149011612
+beta1 = 0.8999999761581421
+beta2 = 0.949999988079071
+epsilon = 0.00000000999999993922529
+
+[scheduler]
+strategy = "cosine_with_warmup"
+total_steps = 1000
+
+[runtime]
+seed = 42
+precision = "bf16"
+log_every_n_steps = 1
+
+[runtime.checkpoint]
+directory = "runs/local/checkpoints"
+every_n_steps = 200
+max_keep = 5
+
+[runtime.evaluation]
+every_n_steps = 200
+max_batches = 1
+
+[runtime.evaluation.best]
+directory = "runs/local/best"
+max_keep = 1
+
+[runtime.logging]
+enable_stdout = true
+tensorboard = "runs/local/tensorboard"
+tensorboard_flush_every_n = 10

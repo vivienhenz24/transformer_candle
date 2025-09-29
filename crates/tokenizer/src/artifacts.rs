@@ -1,10 +1,10 @@
 use crate::config::ArtifactsCfg;
-use crate::errors::{Error, Result};
-use crate::types::ArtifactPaths;
-#[cfg(feature = "train")]
-use crate::types::ArtifactManifest;
 #[cfg(feature = "train")]
 use crate::config::Config;
+use crate::errors::{Error, Result};
+#[cfg(feature = "train")]
+use crate::types::ArtifactManifest;
+use crate::types::ArtifactPaths;
 #[cfg(feature = "train")]
 use serde_json;
 #[cfg(feature = "train")]

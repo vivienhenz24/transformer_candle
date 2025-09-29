@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 
 # IDE
 .vscode/
@@ -15,6 +14,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Training artifacts
+/runs/
 
 
 # Added by cargo
