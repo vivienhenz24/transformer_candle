@@ -13,7 +13,6 @@ pub struct PreprocessConfig {
     pub clean_text: bool,
     pub min_line_length: usize,
     pub hf_data_dir: Option<PathBuf>,
-    pub dataset_weights: HashMap<String, f32>,
 }
 
 /// Configuration for mixing multiple datasets
@@ -40,14 +39,6 @@ impl Default for DatasetMixConfig {
 
 impl Default for PreprocessConfig {
     fn default() -> Self {
-        let mut dataset_weights = HashMap::new();
-        dataset_weights.insert("local".to_string(), 0.15);
-        dataset_weights.insert("openwebtext".to_string(), 0.4);
-        dataset_weights.insert("wikipedia".to_string(), 0.2);
-        dataset_weights.insert("books".to_string(), 0.1);
-        dataset_weights.insert("code".to_string(), 0.1);
-        dataset_weights.insert("paulgraham".to_string(), 0.05);
-
         Self {
             raw_data_dir: PathBuf::from("data/raw"),
             processed_data_dir: PathBuf::from("data/processed"),
@@ -56,7 +47,6 @@ impl Default for PreprocessConfig {
             clean_text: true,
             min_line_length: 10,
             hf_data_dir: Some(PathBuf::from("data/raw_hf")),
-            dataset_weights,
         }
     }
 }
@@ -271,13 +261,11 @@ pub fn preprocess_mixed_datasets(config: &PreprocessConfig) -> io::Result<()> {
     let local_files = get_txt_files(&config.raw_data_dir)?;
     if !local_files.is_empty() {
         println!("📁 Processing {} local files...", local_files.len());
-        let local_weight = config.dataset_weights.get("local").unwrap_or(&0.1);
-        let local_lines = process_dataset_files(
+        let local_lines = process_simple_files(
             &local_files,
             &mut output_file,
             config,
             "Local Data",
-            *local_weight,
             total_datasets == 0
         )?;
         total_lines += local_lines;
@@ -287,7 +275,18 @@ pub fn preprocess_mixed_datasets(config: &PreprocessConfig) -> io::Result<()> {
     // Process HF datasets if available
     if let Some(hf_dir) = &config.hf_data_dir {
         if hf_dir.exists() {
-            total_lines += process_hf_datasets(hf_dir, &mut output_file, config, total_datasets == 0)?;
+            let hf_files = get_txt_files(hf_dir)?;
+            if !hf_files.is_empty() {
+                println!("📁 Processing {} HF files...", hf_files.len());
+                let hf_lines = process_simple_files(
+                    &hf_files,
+                    &mut output_file,
+                    config,
+                    "HF Data",
+                    total_datasets == 0
+                )?;
+                total_lines += hf_lines;
+            }
         } else {
             println!("⚠️  HF data directory not found: {}. Skipping HF datasets.", hf_dir.display());
         }
@@ -298,6 +297,32 @@ pub fn preprocess_mixed_datasets(config: &PreprocessConfig) -> io::Result<()> {
     println!("Output written to: {}", output_path.display());
 
     Ok(())
+}
+
+/// Simple file processing without weights
+fn process_simple_files(
+    files: &[PathBuf],
+    output_file: &mut File,
+    config: &PreprocessConfig,
+    dataset_name: &str,
+    is_first_dataset: bool,
+) -> io::Result<usize> {
+    let mut total_lines = 0;
+
+    for (index, file_path) in files.iter().enumerate() {
+        let lines_processed = process_single_file(
+            file_path,
+            output_file,
+            config,
+            is_first_dataset && index == 0
+        )?;
+
+        total_lines += lines_processed;
+        println!("  ✅ Processed {} lines from {}", lines_processed, file_path.file_name().unwrap_or_default().to_string_lossy());
+    }
+
+    println!("📊 {} total: {} lines", dataset_name, total_lines);
+    Ok(total_lines)
 }
 
 /// Process Hugging Face datasets from downloaded chunks
