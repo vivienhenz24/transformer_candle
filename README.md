@@ -13,6 +13,27 @@ Main libs used are huggingface's candle and tokenizers.
 2. Clone the repository, then run `cargo build` at the root to download dependencies such as Candle and tokenizers.
 3. Execute `cargo run --release` to launch the demo binary once you have artifacts in place.
 
+### RunPod Cloud Training
+Run large experiments in the cloud following a single command flow powered by the orchestrator.
+
+1. **Provision** a pod with an A100 80 GB and mount your shared RunPod volume (`runpodctl create pod -f infra/runpod-pod.yaml`).
+2. **(Optional) Shard** FineWeb by setting `RUN_SHARD=1` when launching the pod. The bundled sharder writes newline shards to `/workspace/datasets/{train,val}/<experiment>` and emits hashed manifests.
+3. **Orchestrate** tokenizer + config generation: the pod manifest calls `cargo run -p training --bin orchestrate -- --mode cloud`, which validates shards, reuses or retrains the tokenizer, and saves `training.toml`/`training.yaml`.
+4. **Train** with `cargo run -p training --bin train -- --config configs/runpod_2b.yaml` (default) or choose another profile via `RUN_CONFIG`.
+
+| Profile | Size | Target environment | Notes |
+| --- | --- | --- | --- |
+| `configs/m3_medium.yaml` | ~22M params | Laptop / dev GPU / smoke tests | Use for local validation before burning cloud time. |
+| `configs/runpod_1b.yaml` | ~1.0B params | RunPod A100 80 GB | Recommended starter profile; lighter memory footprint and faster iterations. |
+| `configs/runpod_2b.yaml` | ~1.97B params | RunPod A100 80 GB | Higher-capacity model; requires more wall-clock time and I/O. |
+| `configs/runpod_4b.yaml` | ~4B params | Multi-GPU (future) / single A100 with high GA | Very slow on a single GPU; provided for scale-out rehearsals. |
+
+**Hugging Face datasets**: use `crates/pretraining-data/scripts/fineweb_sharder.py` inside the pod to stream `HuggingFaceFW/fineweb` directly into shard directories. The script respects `HF_HOME=/workspace/hf_cache` and records per-shard hashes for reproducibility.
+
+**Tokenizer policy**: the orchestrator reuses any tokenizer bundle found under `/workspace/artifacts/tokenizer/<experiment>`. Pass `--force-retrain-tokenizer` to rebuild, or supply `--tokenizer-json` to load external artifacts.
+
+Cost control tip: start with `RUN_SHARD=0` and the `m3_medium` profile locally. Once satisfied, enable cloud sharding and the 2B config; graduate to the 4B experiment only after you monitor memory/throughput.
+
 ### Layout Highlights
 - `main.rs`: entry point that wires together model loading, tokenizer construction, and inference/demo logic.
 - `crates/tokenizer`: thin wrapper around Hugging Face's tokenizer library, offering config-driven byte-level BPE loading and (optionally) training.

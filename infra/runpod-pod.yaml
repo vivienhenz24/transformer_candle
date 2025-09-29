@@ -17,13 +17,81 @@ ports:
 env:
   - name: RUST_LOG
     value: info
-  - name: HF_DATASETS_CACHE
-    value: /workspace/cache/hf
+  - name: RUN_SHARD
+    value: "1"
+  - name: RUN_EXPERIMENT
+    value: runpod-1b
+  - name: RUN_CONFIG
+    value: configs/runpod_1b.yaml
+  - name: SHARD_LINES
+    value: "250000"
+  - name: RUN_LOADER_WORKERS
+    value: "8"
 command:
   - /bin/bash
   - -lc
   - |
       set -euo pipefail
-      cd /workspace/transformer
-      cargo build --release
-      cargo run -p training --bin train -- --config configs/runpod_2b.yaml
+
+      init_dirs() {
+        mkdir -p /workspace/datasets/train
+        mkdir -p /workspace/datasets/val
+        mkdir -p /workspace/artifacts/tokenizer
+        mkdir -p /workspace/cache
+        mkdir -p /workspace/runs
+        mkdir -p /workspace/hf_cache
+        mkdir -p "/workspace/artifacts/tokenizer/${RUN_EXPERIMENT}"
+        mkdir -p "/workspace/datasets/train/${RUN_EXPERIMENT}"
+        mkdir -p "/workspace/datasets/val/${RUN_EXPERIMENT}"
+        mkdir -p "/workspace/cache/${RUN_EXPERIMENT}"
+        mkdir -p "/workspace/runs/${RUN_EXPERIMENT}"
+      }
+
+      maybe_shard() {
+        if [ "${RUN_SHARD:-0}" = "1" ]; then
+          echo "[runpod] RUN_SHARD=1 -> streaming FineWeb sample"
+          python crates/pretraining-data/scripts/fineweb_sharder.py \
+            --mode prod \
+            --split train \
+            --lines-per-shard "${SHARD_LINES}" \
+            --train-output "/workspace/datasets/train/${RUN_EXPERIMENT}" \
+            --val-output "/workspace/datasets/val/${RUN_EXPERIMENT}"
+        else
+          echo "[runpod] RUN_SHARD disabled; reusing existing shards"
+        fi
+      }
+
+      run_pipeline() {
+        cd /workspace/transformer
+        cargo build --release
+        local args=(
+          --mode cloud
+          --experiment "${RUN_EXPERIMENT}"
+          --train-shard-lines "${SHARD_LINES}"
+        )
+
+        if [ -d "/workspace/datasets/train/${RUN_EXPERIMENT}" ] &&
+           [ "$(find "/workspace/datasets/train/${RUN_EXPERIMENT}" -maxdepth 1 -type f -name 'train_*')" != "" ]; then
+          args+=(--reuse-shards)
+        fi
+
+        if [ -f "/workspace/artifacts/tokenizer/${RUN_EXPERIMENT}/tokenizer.json" ]; then
+          args+=(--skip-tokenizer)
+        fi
+
+        if [ -n "${RUN_LOADER_WORKERS:-}" ]; then
+          args+=(--loader-workers "${RUN_LOADER_WORKERS}")
+        fi
+
+        cargo run -p training --bin orchestrate -- "${args[@]}"
+      }
+
+      launch_training() {
+        cd /workspace/transformer
+        cargo run -p training --bin train -- --config "${RUN_CONFIG}"
+      }
+
+      init_dirs
+      maybe_shard
+      run_pipeline
+      launch_training
