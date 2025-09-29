@@ -1,0 +1,11 @@
+{
+  "download_timestamp": 1759116837.57361,
+  "datasets": {
+    "paulgraham": {
+      "chunks": 219,
+      "chunk_size": 0
+    }
+  },
+  "total_files": 218,
+  "output_directory": "data\\raw_hf"
+}
