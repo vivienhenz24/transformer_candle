@@ -46,12 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check available datasets
     if use_mixed_datasets {
         if let Some(hf_dir) = &config.hf_data_dir {
-            let available = check_hf_datasets_available(hf_dir);
-            if !available.is_empty() {
-                println!("\n📊 Available HF Datasets:");
-                for (dataset, count) in available {
-                    println!("  {} - {} chunks", dataset, count);
-                }
+            let file_count = check_hf_datasets_available(hf_dir);
+            if file_count > 0 {
+                println!("\n📊 Available HF files: {}", file_count);
             } else {
                 println!("\n⚠️  No HF datasets found. Run Python download script first!");
             }

@@ -1,7 +1,6 @@
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
 /// Configuration for data preprocessing
 #[derive(Debug, Clone)]
@@ -15,27 +14,6 @@ pub struct PreprocessConfig {
     pub hf_data_dir: Option<PathBuf>,
 }
 
-/// Configuration for mixing multiple datasets
-#[derive(Debug, Clone)]
-pub struct DatasetMixConfig {
-    pub local_data_weight: f32,     // Weight for your local HBS data
-    pub openwebtext_weight: f32,    // Weight for OpenWebText
-    pub wikipedia_weight: f32,      // Weight for Wikipedia
-    pub books_weight: f32,          // Weight for books
-    pub code_weight: f32,           // Weight for code
-}
-
-impl Default for DatasetMixConfig {
-    fn default() -> Self {
-        Self {
-            local_data_weight: 0.1,    // 10%
-            openwebtext_weight: 0.5,   // 50%
-            wikipedia_weight: 0.2,     // 20%
-            books_weight: 0.1,         // 10%
-            code_weight: 0.1,          // 10%
-        }
-    }
-}
 
 impl Default for PreprocessConfig {
     fn default() -> Self {
@@ -325,151 +303,16 @@ fn process_simple_files(
     Ok(total_lines)
 }
 
-/// Process Hugging Face datasets from downloaded chunks
-fn process_hf_datasets(
-    hf_dir: &Path,
-    output_file: &mut File,
-    config: &PreprocessConfig,
-    is_first: bool,
-) -> io::Result<usize> {
-    let mut total_lines = 0;
-    let mut dataset_count = 0;
-
-    // Define dataset patterns and their weights
-    let dataset_patterns = vec![
-        ("openwebtext", config.dataset_weights.get("openwebtext").unwrap_or(&0.4)),
-        ("wikipedia", config.dataset_weights.get("wikipedia").unwrap_or(&0.2)),
-        ("books", config.dataset_weights.get("books").unwrap_or(&0.1)),
-        ("code", config.dataset_weights.get("code").unwrap_or(&0.1)),
-        ("paulgraham", config.dataset_weights.get("paulgraham").unwrap_or(&0.05)),
-    ];
-
-    for (dataset_name, weight) in dataset_patterns {
-        let pattern = format!("{}_chunk_", dataset_name);
-        let dataset_files = get_files_matching_pattern(hf_dir, &pattern)?;
-
-        if !dataset_files.is_empty() {
-            println!("📊 Processing {} {} chunks (weight: {:.1}%)...",
-                    dataset_files.len(), dataset_name, weight * 100.0);
-
-            // Sample files based on weight
-            let sampled_files = sample_files_by_weight(&dataset_files, *weight);
-
-            let lines = process_dataset_files(
-                &sampled_files,
-                output_file,
-                config,
-                &format!("HF-{}", dataset_name),
-                *weight,
-                is_first && dataset_count == 0
-            )?;
-
-            total_lines += lines;
-            dataset_count += 1;
-
-            println!("  ✅ Processed {} lines from {}", lines, dataset_name);
-        }
-    }
-
-    Ok(total_lines)
-}
-
-/// Get files matching a specific pattern in a directory
-fn get_files_matching_pattern(dir: &Path, pattern: &str) -> io::Result<Vec<PathBuf>> {
-    let mut matching_files = Vec::new();
-
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_file() {
-            if let Some(filename) = path.file_name() {
-                if let Some(filename_str) = filename.to_str() {
-                    if filename_str.contains(pattern) && filename_str.ends_with(".txt") {
-                        matching_files.push(path);
-                    }
-                }
-            }
-        }
-    }
-
-    matching_files.sort();
-    Ok(matching_files)
-}
-
-/// Sample files based on dataset weight to control mix proportions
-fn sample_files_by_weight(files: &[PathBuf], weight: f32) -> Vec<PathBuf> {
-    if weight >= 1.0 {
-        return files.to_vec();
-    }
-
-    let sample_count = ((files.len() as f32) * weight).ceil() as usize;
-    let sample_count = sample_count.max(1).min(files.len());
-
-    // Take evenly distributed samples
-    let step = files.len() / sample_count;
-    let step = step.max(1);
-
-    files.iter()
-        .step_by(step)
-        .take(sample_count)
-        .cloned()
-        .collect()
-}
-
-/// Process a group of dataset files with consistent formatting
-fn process_dataset_files(
-    files: &[PathBuf],
-    output_file: &mut File,
-    config: &PreprocessConfig,
-    dataset_name: &str,
-    _weight: f32,
-    is_first_dataset: bool,
-) -> io::Result<usize> {
-    let mut total_lines = 0;
-
-    for (index, file_path) in files.iter().enumerate() {
-        let lines_processed = process_single_file(
-            file_path,
-            output_file,
-            config,
-            is_first_dataset && index == 0
-        )?;
-
-        total_lines += lines_processed;
-
-        // Add dataset boundary marker
-        if config.add_document_separators && (index + 1) % 10 == 0 {
-            writeln!(output_file)?;
-            writeln!(output_file, "=== {} Batch {} ===", dataset_name, (index + 1) / 10)?;
-            writeln!(output_file)?;
-            total_lines += 3;
-        }
-    }
-
-    Ok(total_lines)
-}
-
 /// Check if downloaded HF datasets are available
-pub fn check_hf_datasets_available(hf_dir: &Path) -> HashMap<String, usize> {
-    let mut available = HashMap::new();
-
+pub fn check_hf_datasets_available(hf_dir: &Path) -> usize {
     if !hf_dir.exists() {
-        return available;
+        return 0;
     }
 
-    let datasets = ["openwebtext", "wikipedia", "books", "code", "paulgraham"];
-
-    for dataset in datasets {
-        let pattern = format!("{}_chunk_", dataset);
-        if let Ok(files) = get_files_matching_pattern(hf_dir, &pattern) {
-            if !files.is_empty() {
-                available.insert(dataset.to_string(), files.len());
-            }
-        }
+    match get_txt_files(hf_dir) {
+        Ok(files) => files.len(),
+        Err(_) => 0,
     }
-
-    available
 }
 
 #[cfg(test)]
