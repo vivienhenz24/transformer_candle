@@ -748,15 +748,35 @@ impl Trainer {
         progress: &TrainingProgressSnapshot,
     ) -> Result<(), TrainingError> {
         let micro_batches_per_step = progress.micro_batches_per_step.max(1);
-        let mut total_micro_batches = progress
+        let total_micro_batches = progress
             .global_step
             .saturating_mul(micro_batches_per_step)
             .saturating_add(progress.micro_batch_index);
 
-        while total_micro_batches > 0 {
+        if total_micro_batches == 0 {
+            return Ok(());
+        }
+
+        println!(
+            "fast-forwarding data loader: target global step {} ({} micro-batches)",
+            progress.global_step, total_micro_batches
+        );
+
+        let mut remaining = total_micro_batches;
+        let log_every = (micro_batches_per_step * 20).max(1000);
+
+        while remaining > 0 {
             match self.data_loader.next_batch()? {
                 Some(_) => {
-                    total_micro_batches -= 1;
+                    remaining -= 1;
+                    let processed = total_micro_batches - remaining;
+                    if processed % log_every == 0 || remaining == 0 {
+                        let percent = (processed as f64 / total_micro_batches as f64) * 100.0;
+                        println!(
+                            "fast-forwarding data loader: {}/{} micro-batches ({:.1}%)",
+                            processed, total_micro_batches, percent
+                        );
+                    }
                 }
                 None => {
                     return Err(TrainingError::runtime(
