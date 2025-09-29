@@ -44,3 +44,6 @@ crates/pretraining-data/venv
 models/
 datasets/
 wandb/
+
+# Test data files
+HBS_*.txt
