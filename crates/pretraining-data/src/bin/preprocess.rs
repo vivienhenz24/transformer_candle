@@ -1,6 +1,6 @@
 use pretraining_data::preprocessing::{
-    preprocess_and_combine, preprocess_mixed_datasets, PreprocessConfig,
-    get_corpus_stats, check_hf_datasets_available
+    check_hf_datasets_available, get_corpus_stats, preprocess_and_combine,
+    preprocess_mixed_datasets, PreprocessConfig,
 };
 use std::env;
 use std::path::PathBuf;
@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
 
-    let use_mixed_datasets = args.contains(&"--mixed".to_string()) || args.contains(&"--hf".to_string());
+    let use_mixed_datasets =
+        args.contains(&"--mixed".to_string()) || args.contains(&"--hf".to_string());
 
     // Default configuration
     let mut config = PreprocessConfig::default();
@@ -32,9 +33,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Preprocessing Configuration:");
-    println!("  Mode: {}", if use_mixed_datasets { "Mixed Datasets (HF + Local)" } else { "Local Only" });
+    println!(
+        "  Mode: {}",
+        if use_mixed_datasets {
+            "Mixed Datasets (HF + Local)"
+        } else {
+            "Local Only"
+        }
+    );
     println!("  Raw data directory: {}", config.raw_data_dir.display());
-    println!("  Processed data directory: {}", config.processed_data_dir.display());
+    println!(
+        "  Processed data directory: {}",
+        config.processed_data_dir.display()
+    );
     if let Some(hf_dir) = &config.hf_data_dir {
         println!("  HF data directory: {}", hf_dir.display());
     }

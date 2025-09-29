@@ -175,14 +175,26 @@ pub fn load_checkpoint(directory: &Path) -> Result<LoadOutcome, TrainingError> {
     ensure_version_supported(manifest.version)?;
 
     let model_path = directory.join(&manifest.model.filename);
+    println!(
+        "checkpoint load: validating model weights ({} bytes)",
+        manifest.model.bytes
+    );
     validate_file(&model_path, &manifest.model.sha256)?;
 
     let optimizer_path = directory.join(&manifest.optimizer.filename);
+    println!(
+        "checkpoint load: validating optimizer state ({} bytes)",
+        manifest.optimizer.bytes
+    );
     validate_file(&optimizer_path, &manifest.optimizer.sha256)?;
     let optimizer_state: OptimizerState = read_json(&optimizer_path)?;
 
     let scheduler_state = if let Some(record) = manifest.scheduler.as_ref() {
         let path = directory.join(&record.filename);
+        println!(
+            "checkpoint load: validating scheduler state ({} bytes)",
+            record.bytes
+        );
         validate_file(&path, &record.sha256)?;
         let state: SchedulerState = read_json(&path)?;
         Some(state)
@@ -191,6 +203,10 @@ pub fn load_checkpoint(directory: &Path) -> Result<LoadOutcome, TrainingError> {
     };
 
     let scaler_path = directory.join(&manifest.scaler.filename);
+    println!(
+        "checkpoint load: validating scaler state ({} bytes)",
+        manifest.scaler.bytes
+    );
     validate_file(&scaler_path, &manifest.scaler.sha256)?;
     let scaler_state: GradientScalerState = read_json(&scaler_path)?;
 

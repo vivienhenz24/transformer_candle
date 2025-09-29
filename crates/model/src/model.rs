@@ -1,4 +1,10 @@
-use std::sync::Arc;
+use std::{
+    cell::RefCell,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use attention::core::{Config as AttentionConfig, RopeMode};
 use attention::masks::build_causal_mask;
@@ -20,6 +26,17 @@ pub struct ModelConfigOverrides {
     pub rope_mode: Option<RopeMode>,
 }
 
+struct MaskCacheEntry {
+    batch: usize,
+    seq: usize,
+    tensor: Tensor,
+}
+
+struct PositionCacheEntry {
+    seq: usize,
+    tensor: Tensor,
+}
+
 /// Decoder-only transformer assembled from the shared crates.
 pub struct Model {
     config: ModelConfig,
@@ -28,6 +45,9 @@ pub struct Model {
     final_norm: Arc<dyn NormalizationLayer>,
     policy: PrecisionPolicy,
     uses_preapply_rope: bool,
+    training: AtomicBool,
+    mask_cache: RefCell<Option<MaskCacheEntry>>,
+    position_cache: RefCell<Option<PositionCacheEntry>>,
 }
 
 impl Model {
@@ -60,7 +80,7 @@ impl Model {
         attn_cfg.dropout_p = config.attn_dropout_p;
         let rope_mode = config.rope_mode.clone();
         attn_cfg.rope_mode = rope_mode.clone();
-        attn_cfg.use_padding_mask = false;
+        attn_cfg.use_padding_mask = true;
 
         let mut blocks = Vec::with_capacity(config.n_layers);
         for layer in 0..config.n_layers {
@@ -69,14 +89,20 @@ impl Model {
 
         let uses_preapply_rope = matches!(rope_mode, RopeMode::Preapply);
 
-        Ok(Self {
+        let model = Self {
             config,
             embedding,
             blocks,
             final_norm,
             policy,
             uses_preapply_rope,
-        })
+            training: AtomicBool::new(true),
+            mask_cache: RefCell::new(None),
+            position_cache: RefCell::new(None),
+        };
+
+        model.set_training(true);
+        Ok(model)
     }
 
     /// Returns the model configuration.
@@ -97,9 +123,9 @@ impl Model {
         let batch = dims[0];
         let seq = dims[1];
 
-        let mask = build_causal_mask(&self.config.device, batch, self.config.n_heads, seq, seq)?;
+        let mask = self.cached_causal_mask(batch, seq)?;
         let positions = if self.uses_preapply_rope {
-            Some(build_positions(seq)?)
+            Some(self.cached_positions(seq)?)
         } else {
             None
         };
@@ -110,6 +136,58 @@ impl Model {
 
         let normalized = self.final_norm.forward(&hidden, &self.policy)?;
         self.embedding.linear_out(&normalized)
+    }
+
+    fn cached_causal_mask(&self, batch: usize, seq: usize) -> Result<Tensor> {
+        {
+            let cache = self.mask_cache.borrow();
+            if let Some(entry) = cache.as_ref() {
+                if entry.batch == batch && entry.seq == seq {
+                    return Ok(entry.tensor.clone());
+                }
+            }
+        }
+
+        let tensor = build_causal_mask(&self.config.device, batch, self.config.n_heads, seq, seq)?;
+        let mut cache = self.mask_cache.borrow_mut();
+        *cache = Some(MaskCacheEntry {
+            batch,
+            seq,
+            tensor: tensor.clone(),
+        });
+        Ok(tensor)
+    }
+
+    fn cached_positions(&self, seq: usize) -> Result<Tensor> {
+        {
+            let cache = self.position_cache.borrow();
+            if let Some(entry) = cache.as_ref() {
+                if entry.seq == seq {
+                    return Ok(entry.tensor.clone());
+                }
+            }
+        }
+
+        let tensor = build_positions(seq)?;
+        let mut cache = self.position_cache.borrow_mut();
+        *cache = Some(PositionCacheEntry {
+            seq,
+            tensor: tensor.clone(),
+        });
+        Ok(tensor)
+    }
+
+    /// Toggle training mode for the model and its blocks.
+    pub fn set_training(&self, training: bool) {
+        self.training.store(training, Ordering::Relaxed);
+        for block in &self.blocks {
+            block.set_training(training);
+        }
+    }
+
+    /// Returns the current training flag.
+    pub fn is_training(&self) -> bool {
+        self.training.load(Ordering::Relaxed)
     }
 
     /// Returns the trainable parameters for the model.
