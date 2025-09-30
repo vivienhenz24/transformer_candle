@@ -63,7 +63,7 @@ pub struct SaveRequest<'a> {
     pub config: &'a TrainingConfig,
     pub model: &'a Model,
     pub optimizer: &'a TrainerOptimizer,
-    pub scheduler: Option<&'a (dyn LRScheduler)>,
+    pub scheduler: Option<&'a dyn LRScheduler>,
     pub scaler: &'a GradientScaler,
     pub progress: TrainingProgressSnapshot,
     pub rng: RngSnapshot,
