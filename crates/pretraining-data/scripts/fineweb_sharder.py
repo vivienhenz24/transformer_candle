@@ -18,6 +18,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Iterable, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from datasets import load_dataset  # type: ignore
 
@@ -68,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         "--dataset",
         default=DEFAULT_DATASET,
         help="Dataset repository to stream (default: HuggingFaceFW/fineweb)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for processing (default: 1)",
     )
     parser.add_argument(
         "--train-output",
@@ -220,11 +228,30 @@ def compute_mode_defaults(args: argparse.Namespace) -> tuple[Optional[int], floa
     return cap, val_ratio
 
 
+def process_batch(batch_data: List[dict], val_ratio: float, rng: random.Random) -> tuple[List[str], List[str]]:
+    """Process a batch of samples and return train/val texts."""
+    train_texts = []
+    val_texts = []
+    
+    for sample in batch_data:
+        text = sample.get("text") if isinstance(sample, dict) else None
+        if not text:
+            continue
+            
+        should_take_val = val_ratio > 0.0 and rng.random() < val_ratio
+        if should_take_val:
+            val_texts.append(text)
+        else:
+            train_texts.append(text)
+    
+    return train_texts, val_texts
+
+
 def stream_fineweb(args: argparse.Namespace) -> None:
     cap, val_ratio = compute_mode_defaults(args)
     rng = random.Random(args.seed)
 
-    print(f"Starting FineWeb download with cap={cap}, val_ratio={val_ratio}", file=sys.stderr)
+    print(f"Starting FineWeb download with cap={cap}, val_ratio={val_ratio}, workers={args.workers}", file=sys.stderr)
     print(f"Train output: {args.train_output}", file=sys.stderr)
     print(f"Val output: {args.val_output}", file=sys.stderr)
 
@@ -256,27 +283,86 @@ def stream_fineweb(args: argparse.Namespace) -> None:
 
     processed = 0
     last_print = 0
-    for sample in dataset:
-        text = sample.get("text") if isinstance(sample, dict) else None
-        if not text:
-            continue
+    batch_size = 1000  # Process in batches of 1000
+    
+    if args.workers > 1:
+        print(f"Using {args.workers} parallel workers with batch size {batch_size}", file=sys.stderr)
+        
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            batch = []
+            futures = []
+            
+            for sample in dataset:
+                batch.append(sample)
+                
+                if len(batch) >= batch_size:
+                    # Submit batch for processing
+                    future = executor.submit(process_batch, batch.copy(), val_ratio, rng)
+                    futures.append(future)
+                    batch = []
+                    
+                    # Process completed futures
+                    for future in as_completed(futures):
+                        train_texts, val_texts = future.result()
+                        
+                        # Write results
+                        for text in train_texts:
+                            if train_writer is not None:
+                                train_writer.write(text)
+                        
+                        for text in val_texts:
+                            if val_writer is not None:
+                                val_writer.write(text)
+                        
+                        processed += len(train_texts) + len(val_texts)
+                        
+                        # Print progress
+                        if processed - last_print >= 1000:
+                            print(f"Processed {processed:,} samples...", file=sys.stderr)
+                            last_print = processed
+                        
+                        if cap is not None and processed >= cap:
+                            print(f"Reached cap of {cap:,} samples, stopping...", file=sys.stderr)
+                            break
+                    
+                    futures = []
+                    
+                    if cap is not None and processed >= cap:
+                        break
+            
+            # Process remaining batch
+            if batch and (cap is None or processed < cap):
+                train_texts, val_texts = process_batch(batch, val_ratio, rng)
+                for text in train_texts:
+                    if train_writer is not None:
+                        train_writer.write(text)
+                for text in val_texts:
+                    if val_writer is not None:
+                        val_writer.write(text)
+                processed += len(train_texts) + len(val_texts)
+    else:
+        # Single-threaded processing (original logic)
+        for sample in dataset:
+            text = sample.get("text") if isinstance(sample, dict) else None
+            if not text:
+                continue
 
-        processed += 1
+            processed += 1
 
-        # Print progress every 1000 samples
-        if processed - last_print >= 1000:
-            print(f"Processed {processed:,} samples...", file=sys.stderr)
-            last_print = processed
+            # Print progress every 1000 samples
+            if processed - last_print >= 1000:
+                print(f"Processed {processed:,} samples...", file=sys.stderr)
+                last_print = processed
 
-        should_take_val = write_val and rng.random() < val_ratio
-        if should_take_val and val_writer is not None:
-            val_writer.write(text)
-        elif train_writer is not None:
-            train_writer.write(text)
+            should_take_val = write_val and rng.random() < val_ratio
+            if should_take_val and val_writer is not None:
+                val_writer.write(text)
+            elif train_writer is not None:
+                train_writer.write(text)
 
-        if cap is not None and processed >= cap:
-            print(f"Reached cap of {cap:,} samples, stopping...", file=sys.stderr)
-            break
+            if cap is not None and processed >= cap:
+                print(f"Reached cap of {cap:,} samples, stopping...", file=sys.stderr)
+                break
 
     manifests = {}
     if train_writer is not None:
