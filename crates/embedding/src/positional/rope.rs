@@ -372,13 +372,7 @@ pub fn apply_rope_to_qk(
 
     let sin_slice = sin.narrow(0, pos_start, seq_len)?;
     let cos_slice = cos.narrow(0, pos_start, seq_len)?;
-    let sin_b = sin_slice
-        .reshape((1, 1, seq_len, half_dim))?
-        .broadcast_as((batch, heads, seq_len, half_dim))?;
-    let cos_b = cos_slice
-        .reshape((1, 1, seq_len, half_dim))?
-        .broadcast_as((batch, heads, seq_len, half_dim))?;
-
+    
     let apply_one = |tensor: &Tensor| -> Result<Tensor> {
         let main = tensor.narrow(3, 0, rotate_dim)?;
         let tail_dim = head_dim - rotate_dim;
@@ -389,6 +383,16 @@ pub fn apply_rope_to_qk(
         let chunks = main_pairs.chunk(2, 4)?;
         let even = chunks[0].squeeze(4)?;
         let odd = chunks[1].squeeze(4)?;
+
+        // Cast sin/cos to F32 and broadcast
+        let sin_b = sin_slice
+            .reshape((1, 1, seq_len, half_dim))?
+            .broadcast_as((batch, heads, seq_len, half_dim))?
+            .to_dtype(DType::F32)?;
+        let cos_b = cos_slice
+            .reshape((1, 1, seq_len, half_dim))?
+            .broadcast_as((batch, heads, seq_len, half_dim))?
+            .to_dtype(DType::F32)?;
 
         let even_cos = even.mul(&cos_b)?;
         let odd_sin = odd.mul(&sin_b)?;
