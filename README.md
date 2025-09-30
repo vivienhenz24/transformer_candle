@@ -11,7 +11,8 @@ Main libs used are huggingface's candle and tokenizers.
 ### Getting Started
 1. Install the Rust toolchain (`rustup install stable` is enough) and ensure `cargo` is on your path.
 2. Clone the repository, then run `cargo build` at the root to download dependencies such as Candle and tokenizers.
-3. Execute `cargo run --release` to launch the demo binary once you have artifacts in place.
+3. Download checkpoints from the Hugging Face Hub (`huggingface-cli download vivienhenz/sconce --local-dir runs/pretrained`) or sync them to a directory referenced by your config.
+4. Execute `cargo run --release` to launch the demo binary once you have artifacts in place.
 
 ### RunPod Cloud Training
 Run large experiments in the cloud following a single command flow powered by the orchestrator.
@@ -124,6 +125,11 @@ Model forward pass
 - Place pretrained artifacts under the directory configured in `Config.artifacts` (typically `crates/tokenizer/target/...`).
 - To train new byte-level BPE artifacts, enable the training feature: `cargo test -p tokenizer --features train` or run your own driver that calls `train_bbpe`.
 - The training pipeline accepts plain-text corpora, emits `tokenizer.json` or split vocab/merge files, and records a manifest with hash and timestamp metadata.
+
+### Pretrained Weights
+- Public checkpoints are hosted at `https://huggingface.co/vivienhenz/sconce`. Use `huggingface-cli download`, `git lfs clone`, or the Hub Python API to mirror them locally.
+- Point configs such as `configs/runpod_1b.yaml.training.checkpoint_dir` or CLI flags at the directory where the downloaded `safetensors` weights live (for example `runs/pretrained/checkpoints`).
+- Do not commit large binaries to this repository; reference the Hub location instead so updates stay lightweight.
 
 ### Running the M3 Medium Training Loop
 - **Prepare tokenizer artifacts**: make sure `runs/m3-medium/tokenizer/tokenizer.json` (plus optional `vocab.json`/`merges.txt`) and `runs/m3-medium/special_tokens.txt` exist. If you trained your own tokenizer, copy the artifacts into that directory or update `configs/m3_medium.yaml.tokenizer` paths to match your layout.
