@@ -78,6 +78,9 @@ pub struct StreamingTextDataLoader {
     separator_token_id: Option<u32>,
     token_buffer: VecDeque<u32>,
     document_queue: VecDeque<Vec<u32>>,
+    active_stream: Option<Box<dyn Iterator<Item = std::io::Result<String>>>>,
+    stream_rng: StdRng,
+    line_buffer: Vec<String>,
 }
 
 impl StreamingTextDataLoader {
@@ -139,9 +142,13 @@ impl StreamingTextDataLoader {
             separator_token_id: None,
             token_buffer: VecDeque::with_capacity(sequence_length * micro_batch_size),
             document_queue: VecDeque::new(),
+            active_stream: None,
+            stream_rng: StdRng::seed_from_u64(seed),
+            line_buffer: Vec::with_capacity(shuffle_buffer_size.unwrap_or(4096)),
         };
 
-        if !loader.prepare_next_epoch()? {
+        // Initialize streaming - load enough for initial shuffle buffer
+        if !loader.load_more_documents()? {
             return Err(TrainingError::initialization(
                 "training corpus is empty; no documents available",
             ));
@@ -166,66 +173,59 @@ impl StreamingTextDataLoader {
         self.separator_token_id = token_id;
     }
 
-    fn prepare_next_epoch(&mut self) -> Result<bool> {
-        let epoch = self.prepared_epoch;
-        let mut stream = self.corpus.stream()?;
-
-        let mut rng = StdRng::seed_from_u64(self.epoch_seed.wrapping_add(epoch as u64));
+    fn load_more_documents(&mut self) -> Result<bool> {
+        // Initialize stream if needed
+        if self.active_stream.is_none() {
+            println!("📚 Initializing data stream...");
+            self.active_stream = Some(Box::new(self.corpus.stream()?));
+        }
+        
+        let stream = self.active_stream.as_mut().unwrap();
         let buffer_target = self.shuffle_buffer_size.max(self.micro_batch_size).max(1);
-        let mut buffer = Vec::with_capacity(buffer_target);
-        self.document_queue.clear();
-
-        println!("📚 Preparing epoch {} (loading and tokenizing all shards)...", epoch);
-        let start_time = std::time::Instant::now();
-        let mut line_count = 0;
-        let progress_interval = 1_000_000; // Report every 1M lines
-
-        while let Some(line) = stream.next() {
-            let line = line?;
-            if line.is_empty() {
-                continue;
-            }
-            buffer.push(line);
-            line_count += 1;
-            
-            // Progress reporting
-            if line_count % progress_interval == 0 {
-                let elapsed = start_time.elapsed().as_secs();
-                let rate = if elapsed > 0 { line_count / elapsed as usize } else { 0 };
-                println!(
-                    "   📄 Processed {:.1}M lines ({} docs queued, {} lines/sec)",
-                    line_count as f64 / 1_000_000.0,
-                    self.document_queue.len(),
-                    rate
-                );
-            }
-            
-            if buffer.len() >= buffer_target {
-                self.flush_buffer(&mut buffer, &mut rng)?;
+        
+        // Load only enough lines to fill the shuffle buffer
+        let mut lines_loaded = 0;
+        while lines_loaded < buffer_target && self.document_queue.len() < buffer_target {
+            match stream.next() {
+                Some(Ok(line)) => {
+                    if !line.is_empty() {
+                        self.line_buffer.push(line);
+                        lines_loaded += 1;
+                        
+                        // Flush when buffer is full
+                        if self.line_buffer.len() >= buffer_target {
+                            self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    return Err(TrainingError::runtime(format!("stream error: {}", e)));
+                }
+                None => {
+                    // Stream exhausted - flush remaining and prepare for next epoch
+                    if !self.line_buffer.is_empty() {
+                        self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
+                    }
+                    if self.document_queue.is_empty() {
+                        // No more data available
+                        return Ok(false);
+                    }
+                    // Reset stream for next epoch
+                    self.active_stream = None;
+                    self.current_epoch += 1;
+                    self.prepared_epoch = self.current_epoch + 1;
+                    println!("✅ Epoch {} complete, starting epoch {}", self.current_epoch - 1, self.current_epoch);
+                    return Ok(true);
+                }
             }
         }
-
-        if !buffer.is_empty() {
-            self.flush_buffer(&mut buffer, &mut rng)?;
+        
+        // Flush any remaining lines
+        if !self.line_buffer.is_empty() {
+            self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
         }
-
-        if self.document_queue.is_empty() {
-            return Ok(false);
-        }
-
-        let total_time = start_time.elapsed().as_secs();
-        println!(
-            "✅ Epoch {} ready: {} documents from {:.1}M lines (took {}m {}s)",
-            epoch,
-            self.document_queue.len(),
-            line_count as f64 / 1_000_000.0,
-            total_time / 60,
-            total_time % 60
-        );
-
-        self.current_epoch = epoch;
-        self.prepared_epoch = epoch + 1;
-        Ok(true)
+        
+        Ok(!self.document_queue.is_empty())
     }
 
     fn flush_buffer(&mut self, buffer: &mut Vec<String>, rng: &mut StdRng) -> Result<()> {
@@ -296,7 +296,7 @@ impl StreamingTextDataLoader {
                     return Ok(Some((seq, valid)));
                 }
 
-                if !self.prepare_next_epoch()? {
+                if !self.load_more_documents()? {
                     return Ok(None);
                 }
             }
