@@ -78,10 +78,11 @@ impl CorpusStream {
         let batch = &self.shards[self.next_shard..batch_end];
         
         println!(
-            "[pretraining-data crate] Loading shard batch {}-{} of {} (parallel)",
+            "[pretraining-data crate] Loading shard batch {}-{} of {} (parallel) - Progress: {:.1}%",
             self.next_shard,
             batch_end - 1,
-            self.shards.len()
+            self.shards.len(),
+            (self.next_shard as f64 / self.shards.len() as f64) * 100.0
         );
         
         // Read this batch of shards in parallel
