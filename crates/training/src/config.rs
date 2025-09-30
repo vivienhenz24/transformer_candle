@@ -265,7 +265,7 @@ impl TrainingConfig {
             ff_ratio,
             norm_kind,
             rope_mode: RopeMode::Off,
-            dtype: DType::F32,
+            dtype, // Use the precision from runtime config!
             device: Device::Cpu,
             attn_dropout_p: None,
             residual_dropout_p: None,
