@@ -299,8 +299,23 @@ impl StreamingTextDataLoader {
             }
         }
 
+        // Debug: Check for negative tokens before conversion
+        for (i, &token) in tokens.iter().enumerate() {
+            if token > 50000 {  // Suspiciously large token ID
+                println!("DEBUG: Large token ID at index {}: {}", i, token);
+            }
+        }
+        
         // Convert u32 tokens to i64 to avoid negative token ID issues
         let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
+        
+        // Debug: Check the i64 conversion
+        for (i, &token) in tokens_i64.iter().enumerate() {
+            if token < 0 {
+                println!("DEBUG: Negative token after conversion at index {}: {}", i, token);
+            }
+        }
+        
         let batch_tokens =
             Tensor::from_slice(&tokens_i64, (self.micro_batch_size, target_len), &self.device)
                 .map_err(|err| {
