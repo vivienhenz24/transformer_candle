@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-attention = { path = "../attention" }
+attention = { path = "../attention", features = ["fused"] }
 embedding = { path = "../embedding" }
 layers = { path = "../layers" }
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }

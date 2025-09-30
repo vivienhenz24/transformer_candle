@@ -14,7 +14,6 @@ pub struct PreprocessConfig {
     pub hf_data_dir: Option<PathBuf>,
 }
 
-
 impl Default for PreprocessConfig {
     fn default() -> Self {
         Self {
@@ -43,7 +42,7 @@ pub fn preprocess_and_combine(config: &PreprocessConfig) -> io::Result<()> {
     if txt_files.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("No .txt files found in {}", config.raw_data_dir.display())
+            format!("No .txt files found in {}", config.raw_data_dir.display()),
         ));
     }
 
@@ -56,14 +55,18 @@ pub fn preprocess_and_combine(config: &PreprocessConfig) -> io::Result<()> {
 
     // Process each file
     for (index, file_path) in txt_files.iter().enumerate() {
-        println!("Processing file {}/{}: {}",
-                 index + 1, txt_files.len(), file_path.display());
+        println!(
+            "Processing file {}/{}: {}",
+            index + 1,
+            txt_files.len(),
+            file_path.display()
+        );
 
         let lines_processed = process_single_file(
             file_path,
             &mut output_file,
             config,
-            index == 0  // Don't add separator before first file
+            index == 0, // Don't add separator before first file
         )?;
 
         total_lines += lines_processed;
@@ -87,7 +90,7 @@ fn get_txt_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
     if !dir.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Directory not found: {}", dir.display())
+            format!("Directory not found: {}", dir.display()),
         ));
     }
 
@@ -125,8 +128,11 @@ fn process_single_file(
     // Add document separator (except for first file)
     if config.add_document_separators && !is_first_file {
         writeln!(output_file)?;
-        writeln!(output_file, "--- Document: {} ---",
-                 input_path.file_name().unwrap_or_default().to_string_lossy())?;
+        writeln!(
+            output_file,
+            "--- Document: {} ---",
+            input_path.file_name().unwrap_or_default().to_string_lossy()
+        )?;
         writeln!(output_file)?;
         lines_written += 3;
     }
@@ -161,10 +167,7 @@ fn clean_text_line(line: &str) -> String {
     let mut cleaned = line.trim().to_string();
 
     // Remove excessive whitespace
-    cleaned = cleaned
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
 
     // Remove control characters but keep basic punctuation
     cleaned = cleaned
@@ -244,7 +247,7 @@ pub fn preprocess_mixed_datasets(config: &PreprocessConfig) -> io::Result<()> {
             &mut output_file,
             config,
             "Local Data",
-            total_datasets == 0
+            total_datasets == 0,
         )?;
         total_lines += local_lines;
         total_datasets += 1;
@@ -261,12 +264,15 @@ pub fn preprocess_mixed_datasets(config: &PreprocessConfig) -> io::Result<()> {
                     &mut output_file,
                     config,
                     "HF Data",
-                    total_datasets == 0
+                    total_datasets == 0,
                 )?;
                 total_lines += hf_lines;
             }
         } else {
-            println!("⚠️  HF data directory not found: {}. Skipping HF datasets.", hf_dir.display());
+            println!(
+                "⚠️  HF data directory not found: {}. Skipping HF datasets.",
+                hf_dir.display()
+            );
         }
     }
 
@@ -292,11 +298,15 @@ fn process_simple_files(
             file_path,
             output_file,
             config,
-            is_first_dataset && index == 0
+            is_first_dataset && index == 0,
         )?;
 
         total_lines += lines_processed;
-        println!("  ✅ Processed {} lines from {}", lines_processed, file_path.file_name().unwrap_or_default().to_string_lossy());
+        println!(
+            "  ✅ Processed {} lines from {}",
+            lines_processed,
+            file_path.file_name().unwrap_or_default().to_string_lossy()
+        );
     }
 
     println!("📊 {} total: {} lines", dataset_name, total_lines);

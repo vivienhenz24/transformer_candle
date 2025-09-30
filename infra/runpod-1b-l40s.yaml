@@ -1,13 +1,13 @@
-# Example RunPod Cloud Pod spec for training the 2B parameter model.
+# RunPod Cloud Pod spec for training the 1B parameter model on L40S GPU
 kind: Pod
-name: transformer-2b
+name: transformer-1b
 imageName: runpod/pytorch:2.1.0-cuda12.1-devel
-gpuType: "NVIDIA A100-PCIE-80GB"
+gpuType: "NVIDIA L40S"
 gpuCount: 1
 minVcpus: 16
-minMemory: 120
+minMemory: 60
 volumeMounts:
-  - volumeName: transformer-shared
+  - volumeName: 7o91630spa
     mountPath: /workspace
 ports:
   - containerPort: 22

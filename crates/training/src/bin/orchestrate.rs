@@ -1,11 +1,15 @@
-use std::fs;
-use std::io::Write;
+use std::env;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
+use pretraining_data::sharding::shard_text_by_lines;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokenizer::config::{
     ArtifactsCfg as TokenizerArtifactsCfg, ByteLevelCfg as TokenizerByteLevelCfg,
     Config as TokenizerTrainConfig, ModelCfg as TokenizerModelCfg, PostCfg as TokenizerPostCfg,
@@ -18,6 +22,13 @@ use training::config::{
     TokenizerConfig, TrainingConfig,
 };
 use training::{Trainer, TrainingError};
+
+const CLOUD_TRAIN_ROOT: &str = "/workspace/datasets/train";
+const CLOUD_VAL_ROOT: &str = "/workspace/datasets/val";
+const CLOUD_TOKENIZER_ROOT: &str = "/workspace/artifacts/tokenizer";
+const CLOUD_RUNS_ROOT: &str = "/workspace/runs";
+const CLOUD_CACHE_ROOT: &str = "/workspace/cache";
+const CLOUD_HF_CACHE_ROOT: &str = "/workspace/hf_cache";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,6 +50,44 @@ struct Args {
         help = "Directory where run artifacts (tokenizer, checkpoints, logs) are stored"
     )]
     run_dir: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = PipelineMode::Local,
+        help = "Pipeline target; use 'cloud' to enable sharding and RunPod paths"
+    )]
+    mode: PipelineMode,
+
+    #[arg(
+        long,
+        help = "Experiment slug for cloud layout (defaults to cloud-<timestamp>)"
+    )]
+    experiment: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = 1_000_000,
+        help = "Lines per training shard when sharding is enabled"
+    )]
+    train_shard_lines: usize,
+
+    #[arg(long, help = "Lines per validation shard; defaults to train shard cap")]
+    validation_shard_lines: Option<usize>,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Reuse existing shards instead of regenerating them (cloud mode)"
+    )]
+    reuse_shards: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Regenerate shards even if dataset dirs already exist (cloud mode)"
+    )]
+    force_reshard: bool,
 
     #[arg(long, help = "Existing tokenizer.json to reuse instead of retraining")]
     tokenizer_json: Option<PathBuf>,
@@ -139,6 +188,9 @@ struct Args {
     )]
     shuffle_buffer: usize,
 
+    #[arg(long, help = "Number of streaming dataloader worker threads")]
+    loader_workers: Option<usize>,
+
     #[arg(
         long,
         default_value_t = false,
@@ -167,6 +219,13 @@ struct Args {
 
     #[arg(long, help = "Skip tokenizer training even if artifacts are missing")]
     skip_tokenizer: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Force retraining the tokenizer even if artifacts exist"
+    )]
+    force_retrain_tokenizer: bool,
 
     #[arg(
         long,
@@ -218,6 +277,12 @@ impl From<ScheduleFlag> for LearningRateSchedule {
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
+enum PipelineMode {
+    Local,
+    Cloud,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 enum Profile {
     Full,
     Local,
@@ -257,6 +322,7 @@ enum PipelineError {
     Tokenizer(tokenizer::errors::Error),
     Training(TrainingError),
     Toml(toml::ser::Error),
+    Json(serde_json::Error),
     CtrlC(ctrlc::Error),
     Invalid(String),
 }
@@ -268,6 +334,7 @@ impl std::fmt::Display for PipelineError {
             PipelineError::Tokenizer(err) => write!(f, "tokenizer error: {err}"),
             PipelineError::Training(err) => write!(f, "training error: {err}"),
             PipelineError::Toml(err) => write!(f, "failed to serialize config: {err}"),
+            PipelineError::Json(err) => write!(f, "failed to serialize to json: {err}"),
             PipelineError::CtrlC(err) => write!(f, "failed to install signal handler: {err}"),
             PipelineError::Invalid(msg) => write!(f, "invalid configuration: {msg}"),
         }
@@ -306,6 +373,12 @@ impl From<serde_yaml::Error> for PipelineError {
     }
 }
 
+impl From<serde_json::Error> for PipelineError {
+    fn from(value: serde_json::Error) -> Self {
+        PipelineError::Json(value)
+    }
+}
+
 impl From<ctrlc::Error> for PipelineError {
     fn from(value: ctrlc::Error) -> Self {
         PipelineError::CtrlC(value)
@@ -327,13 +400,12 @@ fn run() -> Result<()> {
         println!("profile: applying 'local' preset for quick smoke testing");
         args.apply_local_preset();
     }
-    let input = ensure_exists(&args.input)?;
-    let validation = args
-        .validation
-        .as_ref()
-        .map(|path| ensure_exists(path))
-        .transpose()?;
-    let validation = validation.unwrap_or_else(|| input.clone());
+
+    if args.reuse_shards && args.force_reshard {
+        return Err(PipelineError::Invalid(
+            "--reuse-shards and --force-reshard cannot be combined".into(),
+        ));
+    }
 
     if args.hidden_size % args.heads != 0 {
         return Err(PipelineError::Invalid(
@@ -353,10 +425,125 @@ fn run() -> Result<()> {
         ));
     }
 
+    if args.mode == PipelineMode::Cloud {
+        if args.train_shard_lines == 0 {
+            return Err(PipelineError::Invalid(
+                "train-shard-lines must be greater than zero".into(),
+            ));
+        }
+        if matches!(args.validation_shard_lines, Some(0)) {
+            return Err(PipelineError::Invalid(
+                "validation-shard-lines must be greater than zero when provided".into(),
+            ));
+        }
+    }
+
+    let input = ensure_exists(&args.input)?;
+    let validation = args
+        .validation
+        .as_ref()
+        .map(|path| ensure_exists(path))
+        .transpose()?;
+    let validation = validation.unwrap_or_else(|| input.clone());
+
+    match args.mode {
+        PipelineMode::Local => run_local(args, input, validation),
+        PipelineMode::Cloud => run_cloud(args, input, validation),
+    }
+}
+
+fn run_local(args: Args, train_source: PathBuf, validation_source: PathBuf) -> Result<()> {
     let run_dir = args
         .run_dir
         .clone()
         .unwrap_or_else(|| default_run_dir("run"));
+    let artifacts = prepare_artifacts(&args, run_dir)?;
+
+    let data = PipelineData {
+        train_shards: vec![train_source.clone()],
+        validation_shards: vec![validation_source],
+        tokenizer_inputs: vec![train_source],
+        cache_dir: None,
+        shared_tokenizer_dir: None,
+    };
+
+    execute_pipeline(args, artifacts, data)
+}
+
+fn run_cloud(args: Args, train_source: PathBuf, validation_source: PathBuf) -> Result<()> {
+    let experiment = args
+        .experiment
+        .clone()
+        .unwrap_or_else(default_cloud_experiment);
+
+    let run_dir = args
+        .run_dir
+        .clone()
+        .unwrap_or_else(|| Path::new(CLOUD_RUNS_ROOT).join(&experiment));
+    configure_hf_cache()?;
+    let artifacts = prepare_artifacts(&args, run_dir)?;
+
+    let datasets = prepare_cloud_datasets(&args, &experiment, &train_source, &validation_source)?;
+
+    let cache_dir = Path::new(CLOUD_CACHE_ROOT).join(&experiment);
+    fs::create_dir_all(&cache_dir)?;
+    let shared_tokenizer_dir = Path::new(CLOUD_TOKENIZER_ROOT).join(&experiment);
+
+    let data = PipelineData {
+        train_shards: datasets.train_shards,
+        validation_shards: datasets.validation_shards,
+        tokenizer_inputs: datasets.tokenizer_inputs,
+        cache_dir: Some(cache_dir),
+        shared_tokenizer_dir: Some(shared_tokenizer_dir),
+    };
+
+    execute_pipeline(args, artifacts, data)
+}
+
+struct PipelineArtifacts {
+    run_dir: PathBuf,
+    tokenizer_dir: PathBuf,
+    checkpoints_dir: PathBuf,
+    best_dir: PathBuf,
+    tensorboard_dir: PathBuf,
+    special_tokens_path: PathBuf,
+}
+
+struct PipelineData {
+    train_shards: Vec<PathBuf>,
+    validation_shards: Vec<PathBuf>,
+    tokenizer_inputs: Vec<PathBuf>,
+    cache_dir: Option<PathBuf>,
+    shared_tokenizer_dir: Option<PathBuf>,
+}
+
+struct TokenizerOutcome {
+    path: PathBuf,
+    trained: bool,
+}
+
+fn configure_hf_cache() -> Result<()> {
+    let cache_root = Path::new(CLOUD_HF_CACHE_ROOT);
+    fs::create_dir_all(cache_root)?;
+    let datasets_cache = cache_root.join("datasets");
+    let hub_cache = cache_root.join("hub");
+    fs::create_dir_all(&datasets_cache)?;
+    fs::create_dir_all(&hub_cache)?;
+
+    env::set_var("HF_HOME", cache_root);
+    env::set_var("HF_DATASETS_CACHE", &datasets_cache);
+    env::set_var("HF_HUB_CACHE", &hub_cache);
+
+    if env::var("HUGGINGFACEHUB_API_TOKEN").is_err() {
+        if let Ok(token) = env::var("HF_TOKEN") {
+            env::set_var("HUGGINGFACEHUB_API_TOKEN", token);
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_artifacts(args: &Args, run_dir: PathBuf) -> Result<PipelineArtifacts> {
     fs::create_dir_all(&run_dir)?;
 
     let tokenizer_dir = run_dir.join("tokenizer");
@@ -375,35 +562,77 @@ fn run() -> Result<()> {
     fs::create_dir_all(&tensorboard_dir)?;
 
     let special_tokens_path = run_dir.join("special_tokens.txt");
-    write_special_tokens(&special_tokens_path)?;
 
-    let tokenizer_json_path = resolve_tokenizer(&args, &tokenizer_dir, &input)?;
+    Ok(PipelineArtifacts {
+        run_dir,
+        tokenizer_dir,
+        checkpoints_dir,
+        best_dir,
+        tensorboard_dir,
+        special_tokens_path,
+    })
+}
+
+fn execute_pipeline(args: Args, artifacts: PipelineArtifacts, data: PipelineData) -> Result<()> {
+    write_special_tokens(&artifacts.special_tokens_path)?;
+
+    let PipelineData {
+        train_shards,
+        validation_shards,
+        tokenizer_inputs,
+        cache_dir,
+        shared_tokenizer_dir,
+    } = data;
+
+    verify_shards("train", &train_shards)?;
+    verify_shards("validation", &validation_shards)?;
+
+    let tokenizer_outcome = resolve_tokenizer(
+        &args,
+        &artifacts.tokenizer_dir,
+        &tokenizer_inputs,
+        shared_tokenizer_dir.as_deref(),
+    )?;
+    let tokenizer_json_path = tokenizer_outcome.path.clone();
     println!(
         "[orchestrator] tokenizer artifacts ready at {}",
         tokenizer_json_path.display()
     );
 
-    let training_config = build_training_config(
+    write_tokenizer_manifest(
         &args,
-        &tokenizer_json_path,
-        &special_tokens_path,
-        &input,
-        &validation,
-        &checkpoints_dir,
-        &best_dir,
-        &tensorboard_dir,
+        &artifacts.tokenizer_dir,
+        &tokenizer_inputs,
+        tokenizer_outcome.trained,
     )?;
 
-    let config_toml_path = run_dir.join("training.toml");
+    let config_tokenizer_path = shared_tokenizer_dir
+        .as_ref()
+        .map(|dir| dir.join("tokenizer.json"))
+        .unwrap_or_else(|| tokenizer_json_path.clone());
+
+    let training_config = build_training_config(
+        &args,
+        &config_tokenizer_path,
+        &artifacts.special_tokens_path,
+        &train_shards,
+        &validation_shards,
+        &artifacts.checkpoints_dir,
+        &artifacts.best_dir,
+        &artifacts.tensorboard_dir,
+        cache_dir.as_deref(),
+    )?;
+
+    let config_toml_path = artifacts.run_dir.join("training.toml");
     let config_toml = toml::to_string_pretty(&training_config)?;
     fs::write(&config_toml_path, config_toml)?;
 
-    let config_yaml_path = run_dir.join("training.yaml");
+    let config_yaml_path = artifacts.run_dir.join("training.yaml");
     let config_yaml = serde_yaml::to_string(&training_config)?;
     fs::write(&config_yaml_path, config_yaml)?;
 
     println!(
-        "saved training config to {} and {}",
+        "[orchestrator] saved training config to {} and {}",
         config_toml_path.display(),
         config_yaml_path.display()
     );
@@ -415,6 +644,21 @@ fn run() -> Result<()> {
             .model
             .num_attention_heads
             .unwrap_or_default()
+    );
+    println!(
+        "[orchestrator] reproducibility -> tokenizer_vocab={} tokenizer_seed={} model_seed={} schedule={:?} precision={:?}",
+        args.vocab_size,
+        args.tokenizer_seed,
+        args.seed,
+        args.schedule,
+        args.precision
+    );
+    println!(
+        "[orchestrator] dataloader -> batch_size={} grad_accum={} shuffle_buffer={} num_workers={:?}",
+        args.batch_size,
+        args.grad_accum,
+        args.shuffle_buffer,
+        args.loader_workers
     );
 
     let mut trainer = Trainer::new(training_config.clone())?;
@@ -451,8 +695,206 @@ fn run() -> Result<()> {
 
     println!(
         "training complete; artifacts stored under {}",
-        run_dir.display()
+        artifacts.run_dir.display()
     );
+    Ok(())
+}
+
+struct CloudDatasets {
+    train_shards: Vec<PathBuf>,
+    validation_shards: Vec<PathBuf>,
+    tokenizer_inputs: Vec<PathBuf>,
+}
+
+fn prepare_cloud_datasets(
+    args: &Args,
+    experiment: &str,
+    train_source: &Path,
+    validation_source: &Path,
+) -> Result<CloudDatasets> {
+    let train_dir = Path::new(CLOUD_TRAIN_ROOT).join(experiment);
+    let train_shards = materialize_shards(
+        train_source,
+        &train_dir,
+        "train",
+        args.train_shard_lines,
+        args.reuse_shards,
+        args.force_reshard,
+    )?;
+
+    let val_dir = Path::new(CLOUD_VAL_ROOT).join(experiment);
+    let validation_shards = if train_source == validation_source {
+        mirror_shards(
+            &train_shards,
+            &val_dir,
+            "val",
+            args.reuse_shards,
+            args.force_reshard,
+        )?
+    } else {
+        materialize_shards(
+            validation_source,
+            &val_dir,
+            "val",
+            args.validation_shard_lines
+                .unwrap_or(args.train_shard_lines),
+            args.reuse_shards,
+            args.force_reshard,
+        )?
+    };
+
+    Ok(CloudDatasets {
+        tokenizer_inputs: train_shards.clone(),
+        train_shards,
+        validation_shards,
+    })
+}
+
+fn materialize_shards(
+    source: &Path,
+    destination_dir: &Path,
+    prefix: &str,
+    max_lines: usize,
+    reuse_shards: bool,
+    force_reshard: bool,
+) -> Result<Vec<PathBuf>> {
+    if reuse_shards {
+        return collect_existing_shards(destination_dir);
+    }
+
+    if destination_dir.exists() {
+        if force_reshard {
+            fs::remove_dir_all(destination_dir)?;
+        } else {
+            return Err(PipelineError::Invalid(format!(
+                "dataset directory {} already exists; pass --reuse-shards or --force-reshard",
+                destination_dir.display()
+            )));
+        }
+    }
+
+    if source.is_dir() {
+        replicate_directory_shards(source, destination_dir, prefix)
+    } else if source.is_file() {
+        shard_text_by_lines(source, destination_dir, prefix, max_lines).map_err(PipelineError::from)
+    } else {
+        Err(PipelineError::Invalid(format!(
+            "path {} does not exist",
+            source.display()
+        )))
+    }
+}
+
+fn replicate_directory_shards(
+    source_dir: &Path,
+    destination_dir: &Path,
+    prefix: &str,
+) -> Result<Vec<PathBuf>> {
+    fs::create_dir_all(destination_dir)?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(source_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            files.push(entry.path());
+        }
+    }
+    files.sort();
+    if files.is_empty() {
+        return Err(PipelineError::Invalid(format!(
+            "no shards found under {}",
+            source_dir.display()
+        )));
+    }
+
+    let mut shards = Vec::new();
+    for (idx, src) in files.iter().enumerate() {
+        let dest = destination_dir.join(format!("{prefix}-{idx:05}.txt"));
+        link_or_copy(src, &dest)?;
+        shards.push(dest);
+    }
+    Ok(shards)
+}
+
+fn mirror_shards(
+    source_shards: &[PathBuf],
+    destination_dir: &Path,
+    prefix: &str,
+    reuse_shards: bool,
+    force_reshard: bool,
+) -> Result<Vec<PathBuf>> {
+    if reuse_shards {
+        return collect_existing_shards(destination_dir);
+    }
+
+    if destination_dir.exists() {
+        if force_reshard {
+            fs::remove_dir_all(destination_dir)?;
+        } else {
+            return Err(PipelineError::Invalid(format!(
+                "dataset directory {} already exists; pass --reuse-shards or --force-reshard",
+                destination_dir.display()
+            )));
+        }
+    }
+
+    fs::create_dir_all(destination_dir)?;
+    let mut shards = Vec::new();
+    for (idx, shard) in source_shards.iter().enumerate() {
+        let dest = destination_dir.join(format!("{prefix}-{idx:05}.txt"));
+        link_or_copy(shard, &dest)?;
+        shards.push(dest);
+    }
+    Ok(shards)
+}
+
+fn collect_existing_shards(dir: &Path) -> Result<Vec<PathBuf>> {
+    if !dir.is_dir() {
+        return Err(PipelineError::Invalid(format!(
+            "expected shard directory {} to exist",
+            dir.display()
+        )));
+    }
+
+    let mut shards = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            shards.push(entry.path());
+        }
+    }
+    shards.sort();
+    if shards.is_empty() {
+        return Err(PipelineError::Invalid(format!(
+            "no shards found under {}",
+            dir.display()
+        )));
+    }
+    Ok(shards)
+}
+
+#[cfg(unix)]
+fn link_or_copy(source: &Path, dest: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    if dest.exists() {
+        fs::remove_file(dest)?;
+    }
+
+    match symlink(source, dest) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            let _ = fs::copy(source, dest)?;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn link_or_copy(source: &Path, dest: &Path) -> io::Result<()> {
+    if dest.exists() {
+        fs::remove_file(dest)?;
+    }
+    let _ = fs::copy(source, dest)?;
     Ok(())
 }
 
@@ -467,32 +909,113 @@ fn ensure_exists(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn resolve_tokenizer(args: &Args, tokenizer_dir: &Path, corpus: &Path) -> Result<PathBuf> {
-    if let Some(existing) = args.tokenizer_json.as_ref() {
-        println!("using existing tokenizer artifact {}", existing.display());
-        return Ok(existing.clone());
+fn resolve_tokenizer(
+    args: &Args,
+    tokenizer_dir: &Path,
+    corpora: &[PathBuf],
+    shared_dir: Option<&Path>,
+) -> Result<TokenizerOutcome> {
+    if corpora.is_empty() {
+        return Err(PipelineError::Invalid(
+            "no tokenizer corpora supplied".into(),
+        ));
     }
 
     let tokenizer_json = tokenizer_dir.join("tokenizer.json");
-    if tokenizer_json.exists() {
-        if args.skip_tokenizer {
+
+    if let Some(shared) = shared_dir {
+        fs::create_dir_all(shared)?;
+    }
+
+    if let Some(existing) = args.tokenizer_json.as_ref() {
+        let existing = ensure_exists(existing)?;
+        copy_tokenizer_file(&existing, &tokenizer_json)?;
+        if let Some(parent) = existing.parent() {
+            copy_tokenizer_bundle(parent, tokenizer_dir)?;
+        }
+        sync_shared_tokenizer_dir(tokenizer_dir, shared_dir)?;
+        println!(
+            "[orchestrator] using provided tokenizer artifact {}; skipping training",
+            tokenizer_json.display()
+        );
+        return Ok(TokenizerOutcome {
+            path: tokenizer_json,
+            trained: false,
+        });
+    }
+
+    if !args.force_retrain_tokenizer {
+        if tokenizer_json.exists() {
             println!(
-                "reusing tokenizer artifact {}; skipping training",
+                "[orchestrator] tokenizer artifacts already present at {}; pass --force-retrain-tokenizer to rebuild",
                 tokenizer_json.display()
             );
-            return Ok(tokenizer_json);
+            sync_shared_tokenizer_dir(tokenizer_dir, shared_dir)?;
+            return Ok(TokenizerOutcome {
+                path: tokenizer_json,
+                trained: false,
+            });
+        }
+
+        if let Some(shared) = shared_dir {
+            let shared_json = shared.join("tokenizer.json");
+            if shared_json.exists() {
+                println!(
+                    "[orchestrator] copying tokenizer bundle from shared dir {}; pass --force-retrain-tokenizer to rebuild",
+                    shared.display()
+                );
+                copy_tokenizer_bundle(shared, tokenizer_dir)?;
+                return Ok(TokenizerOutcome {
+                    path: tokenizer_json,
+                    trained: false,
+                });
+            }
         }
     }
 
     if args.skip_tokenizer {
+        if tokenizer_json.exists() {
+            println!(
+                "[orchestrator] skip-tokenizer set; reusing artifact {}",
+                tokenizer_json.display()
+            );
+            sync_shared_tokenizer_dir(tokenizer_dir, shared_dir)?;
+            return Ok(TokenizerOutcome {
+                path: tokenizer_json,
+                trained: false,
+            });
+        }
+        if let Some(shared) = shared_dir {
+            let shared_json = shared.join("tokenizer.json");
+            if shared_json.exists() {
+                println!(
+                    "[orchestrator] skip-tokenizer set; copying artifact from shared dir {}",
+                    shared.display()
+                );
+                copy_tokenizer_bundle(shared, tokenizer_dir)?;
+                return Ok(TokenizerOutcome {
+                    path: tokenizer_json,
+                    trained: false,
+                });
+            }
+        }
         return Err(PipelineError::Invalid(
             "skip-tokenizer was set but no tokenizer artifact was supplied".into(),
         ));
     }
 
+    if args.force_retrain_tokenizer && tokenizer_json.exists() {
+        println!(
+            "[orchestrator] force-retrain-tokenizer set; retraining tokenizer at {}",
+            tokenizer_json.display()
+        );
+    }
+
     println!(
-        "training tokenizer (vocab={} lines={:?})",
-        args.vocab_size, args.tokenizer_max_lines
+        "[orchestrator] training tokenizer (vocab={} lines={:?} shards={})",
+        args.vocab_size,
+        args.tokenizer_max_lines,
+        corpora.len()
     );
 
     let tokenizer_cfg = TokenizerTrainConfig {
@@ -514,7 +1037,7 @@ fn resolve_tokenizer(args: &Args, tokenizer_dir: &Path, corpus: &Path) -> Result
             pair_template: false,
         }),
         training: Some(TokenizerTrainingCfg {
-            inputs: vec![corpus.to_path_buf()],
+            inputs: corpora.to_vec(),
             seed: args.tokenizer_seed,
             shuffle: true,
             max_lines: args.tokenizer_max_lines,
@@ -534,22 +1057,177 @@ fn resolve_tokenizer(args: &Args, tokenizer_dir: &Path, corpus: &Path) -> Result
         .save(tokenizer_json.clone(), false)
         .map_err(tokenizer::errors::Error::from)?;
     println!(
-        "tokenizer training complete; artifacts in {}",
+        "[orchestrator] tokenizer training complete; artifacts in {}",
         tokenizer_dir.display()
     );
 
-    Ok(tokenizer_json)
+    sync_shared_tokenizer_dir(tokenizer_dir, shared_dir)?;
+
+    Ok(TokenizerOutcome {
+        path: tokenizer_json,
+        trained: true,
+    })
+}
+
+const TOKENIZER_BUNDLE_FILES: &[&str] = &[
+    "tokenizer.json",
+    "vocab.json",
+    "merges.txt",
+    "manifest.json",
+];
+
+fn copy_tokenizer_file(source: &Path, dest: &Path) -> Result<()> {
+    if source == dest {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, dest)?;
+    Ok(())
+}
+
+fn copy_tokenizer_bundle(source_dir: &Path, destination_dir: &Path) -> Result<()> {
+    fs::create_dir_all(destination_dir)?;
+    for name in TOKENIZER_BUNDLE_FILES {
+        let source_path = source_dir.join(name);
+        if source_path.exists() {
+            let destination_path = destination_dir.join(name);
+            copy_tokenizer_file(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_shared_tokenizer_dir(local_dir: &Path, shared_dir: Option<&Path>) -> Result<()> {
+    if let Some(dir) = shared_dir {
+        copy_tokenizer_bundle(local_dir, dir)?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct TokenizerManifestEntry {
+    path: String,
+    size_bytes: Option<u64>,
+    sha256: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TokenizerManifest {
+    version: u32,
+    generated_at_unix: u64,
+    trained: bool,
+    force_retrain: bool,
+    vocab_size: usize,
+    tokenizer_seed: u64,
+    tokenizer_max_lines: Option<usize>,
+    corpora: Vec<TokenizerManifestEntry>,
+}
+
+fn write_tokenizer_manifest(
+    args: &Args,
+    tokenizer_dir: &Path,
+    corpora: &[PathBuf],
+    trained: bool,
+) -> Result<()> {
+    let generated_at_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut entries = Vec::new();
+    for path in corpora {
+        let (size_bytes, sha256) = if path.is_file() {
+            let meta = fs::metadata(path)?;
+            let hash = sha256_file(path)?;
+            (Some(meta.len()), Some(hash))
+        } else {
+            (None, None)
+        };
+
+        entries.push(TokenizerManifestEntry {
+            path: path.display().to_string(),
+            size_bytes,
+            sha256,
+        });
+    }
+
+    let manifest = TokenizerManifest {
+        version: 1,
+        generated_at_unix,
+        trained,
+        force_retrain: args.force_retrain_tokenizer,
+        vocab_size: args.vocab_size,
+        tokenizer_seed: args.tokenizer_seed,
+        tokenizer_max_lines: args.tokenizer_max_lines,
+        corpora: entries,
+    };
+
+    let manifest_path = tokenizer_dir.join("manifest.json");
+    let json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(manifest_path, json)?;
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn verify_shards(label: &str, shards: &[PathBuf]) -> Result<()> {
+    if shards.is_empty() {
+        return Err(PipelineError::Invalid(format!(
+            "no {label} shards provided; run the sharder before launching training"
+        )));
+    }
+
+    let mut total_bytes = 0u64;
+    for path in shards {
+        if !path.is_file() {
+            return Err(PipelineError::Invalid(format!(
+                "{label} shard {} is missing or not a file",
+                path.display()
+            )));
+        }
+        let meta = fs::metadata(path)?;
+        if meta.len() == 0 {
+            return Err(PipelineError::Invalid(format!(
+                "{label} shard {} is empty; regenerate shards",
+                path.display()
+            )));
+        }
+        total_bytes = total_bytes.saturating_add(meta.len());
+    }
+
+    let mb = total_bytes as f64 / 1_048_576_f64;
+    println!(
+        "[orchestrator] {label} shards verified ({} files, {:.2} MiB)",
+        shards.len(),
+        mb
+    );
+    Ok(())
 }
 
 fn build_training_config(
     args: &Args,
     tokenizer_json: &Path,
     special_tokens: &Path,
-    train_corpus: &Path,
-    validation_corpus: &Path,
+    train_shards: &[PathBuf],
+    validation_shards: &[PathBuf],
     checkpoint_dir: &Path,
     best_dir: &Path,
     tensorboard_dir: &Path,
+    cache_dir: Option<&Path>,
 ) -> Result<TrainingConfig> {
     let optimizer = OptimizerConfig {
         learning_rate: args.learning_rate,
@@ -610,13 +1288,13 @@ fn build_training_config(
     };
 
     let data = DataConfig {
-        train_shards: vec![train_corpus.to_path_buf()],
-        validation_shards: vec![validation_corpus.to_path_buf()],
+        train_shards: train_shards.to_vec(),
+        validation_shards: validation_shards.to_vec(),
         batch_size: args.batch_size,
         gradient_accumulation_steps: args.grad_accum.max(1),
-        num_workers: None,
+        num_workers: args.loader_workers,
         shuffle_buffer_size: Some(args.shuffle_buffer.max(1)),
-        cache_dir: None,
+        cache_dir: cache_dir.map(PathBuf::from),
     };
 
     let config = TrainingConfig {
@@ -645,4 +1323,12 @@ fn default_run_dir(prefix: &str) -> PathBuf {
         .unwrap_or_default()
         .as_secs();
     PathBuf::from(format!("runs/{prefix}-{timestamp}"))
+}
+
+fn default_cloud_experiment() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("cloud-{timestamp}")
 }

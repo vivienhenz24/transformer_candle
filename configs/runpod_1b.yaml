@@ -1,0 +1,67 @@
+# RunPod 1B parameter training profile (single A100 80 GB friendly).
+
+model:
+  hidden_size: 2048
+  intermediate_size: 8192
+  num_layers: 20
+  num_attention_heads: 32
+  num_key_value_heads: 32
+  max_position_embeddings: 2048
+  attn_dropout: null
+  residual_dropout: 0.0
+  rope_mode: null
+  rope_theta: null
+
+tokenizer:
+  tokenizer_json: "/workspace/artifacts/tokenizer/runpod-1b/tokenizer.json"
+  vocab: "/workspace/artifacts/tokenizer/runpod-1b/vocab.json"
+  merges: "/workspace/artifacts/tokenizer/runpod-1b/merges.txt"
+  special_tokens: "/workspace/runs/runpod-1b/special_tokens.txt"
+
+data:
+  train_shards:
+    - "/workspace/datasets/train/runpod-1b/train_0000.txt"
+  validation_shards:
+    - "/workspace/datasets/val/runpod-1b/val_0000.txt"
+  batch_size: 2
+  gradient_accumulation_steps: 32
+  shuffle_buffer_size: 65536
+  num_workers: 8
+  cache_dir: "/workspace/cache/runpod-1b"
+
+optimizer:
+  algorithm: adam_w
+  learning_rate: 1.8e-4
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  epsilon: 1.0e-8
+
+scheduler:
+  strategy: cosine_with_warmup
+  warmup_steps: 3000
+  total_steps: 300000
+  total_epochs: null
+  min_lr: 1.8e-5
+  max_lr: null
+
+runtime:
+  seed: 42
+  precision: bf16
+  log_every_n_steps: 50
+  checkpoint:
+    directory: "/workspace/runs/runpod-1b/checkpoints"
+    every_n_steps: 1500
+    every_n_epochs: null
+    max_keep: 10
+  evaluation:
+    every_n_steps: 4500
+    every_n_epochs: null
+    max_batches: 32
+    best:
+      directory: "/workspace/runs/runpod-1b/best"
+      max_keep: 2
+  logging:
+    enable_stdout: true
+    tensorboard: "/workspace/runs/runpod-1b/tensorboard"
+    tensorboard_flush_every_n: 100
