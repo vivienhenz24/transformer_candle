@@ -85,14 +85,15 @@ impl CrossEntropyLoss {
             }
         };
 
+        let logits_dtype = logits.dtype();
         let valid_mask = if let Some(ignore_index) = self.ignore_index {
             targets_flat
                 .ne(ignore_index)
                 .map_err(to_runtime_error)?
-                .to_dtype(DType::F32)
+                .to_dtype(logits_dtype)
                 .map_err(to_runtime_error)?
         } else {
-            Tensor::ones((token_count,), DType::F32, device).map_err(to_runtime_error)?
+            Tensor::ones((token_count,), logits_dtype, device).map_err(to_runtime_error)?
         };
 
         let total_tokens_scalar = valid_mask
@@ -146,7 +147,7 @@ impl CrossEntropyLoss {
         let correct = predictions
             .eq(&targets_flat)
             .map_err(to_runtime_error)?
-            .to_dtype(DType::F32)
+            .to_dtype(logits_dtype)
             .map_err(to_runtime_error)?;
         let correct = (&correct * &valid_mask).map_err(to_runtime_error)?;
         let correct_tokens = correct
