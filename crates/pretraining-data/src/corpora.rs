@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use rayon::prelude::*;
 
 /// Trait for corpus types that can stream text data
@@ -48,13 +48,10 @@ impl TextCorpus for StreamingCorpus {
         println!("[pretraining-data crate] StreamingCorpus::stream reading {} shards in parallel", self.shards.len());
         
         // Read all shards in parallel using rayon
-        use std::sync::Mutex;
-        let lines_mutex = Arc::new(Mutex::new(Vec::new()));
-        
-        self.shards
+        let all_lines: Vec<String> = self.shards
             .par_iter()
             .enumerate()
-            .for_each(|(idx, path)| {
+            .flat_map(|(idx, path)| {
                 if idx % 10 == 0 {
                     println!("[pretraining-data crate] Reading shard batch starting at {}", idx);
                 }
@@ -62,26 +59,19 @@ impl TextCorpus for StreamingCorpus {
                 match File::open(path) {
                     Ok(file) => {
                         let reader = BufReader::new(file);
-                        let shard_lines: Vec<String> = reader
+                        reader
                             .lines()
                             .filter_map(|line| line.ok())
                             .filter(|line| !line.trim().is_empty())
-                            .collect();
-                        
-                        if let Ok(mut lines) = lines_mutex.lock() {
-                            lines.extend(shard_lines);
-                        }
+                            .collect::<Vec<String>>()
                     }
                     Err(e) => {
                         eprintln!("[pretraining-data crate] Failed to open shard {}: {}", path.display(), e);
+                        Vec::new()
                     }
                 }
-            });
-        
-        let all_lines = Arc::try_unwrap(lines_mutex)
-            .unwrap_or_else(|arc| arc.lock().unwrap().clone())
-            .into_inner()
-            .unwrap();
+            })
+            .collect();
         
         println!("[pretraining-data crate] Loaded {} total lines from {} shards", all_lines.len(), self.shards.len());
         
