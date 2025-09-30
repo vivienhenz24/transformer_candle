@@ -8,8 +8,8 @@ default = []
 long-context = []
 
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["cuda"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["cuda"] }
 log = "0.4"
 layers = { path = "../layers" }
 
