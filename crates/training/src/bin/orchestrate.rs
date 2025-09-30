@@ -544,15 +544,7 @@ fn run_cloud(args: Args, train_source: PathBuf, validation_source: PathBuf) -> R
 }
 
 fn run_streaming(args: Args) -> Result<()> {
-    println!("🌊 Running in STREAMING mode");
-    println!("Dataset: {}", args.dataset);
-    println!("Split: {}", args.split);
-    if let Some(max) = args.max_samples {
-        println!("Max samples: {}", max);
-    } else {
-        println!("Max samples: unlimited");
-    }
-    println!();
+    println!("🌊 Streaming from: {} ({})", args.dataset, args.split);
 
     let experiment = args
         .experiment
@@ -574,19 +566,19 @@ fn run_streaming(args: Args) -> Result<()> {
 
     // Train or load tokenizer using streaming data
     let tokenizer_outcome = if let Some(existing) = args.tokenizer_json.clone() {
-        println!("📋 Using existing tokenizer from {}", existing.display());
+        // Using existing tokenizer
         TokenizerOutcome {
             path: existing,
             trained: false,
         }
     } else if shared_tokenizer_dir.join("tokenizer.json").exists() && !args.skip_tokenizer {
-        println!("📋 Using existing tokenizer from shared directory");
+        // Using existing tokenizer
         TokenizerOutcome {
             path: shared_tokenizer_dir.join("tokenizer.json"),
             trained: false,
         }
     } else {
-        println!("🔤 Training tokenizer from streaming data...");
+        println!("🔤 Training tokenizer...");
         train_tokenizer_from_stream(&args, &shared_tokenizer_dir)?
     };
 
@@ -598,8 +590,7 @@ fn run_streaming(args: Args) -> Result<()> {
     // Generate training config with streaming enabled
     generate_streaming_config(&args, &artifacts, &experiment)?;
 
-    println!("\n✅ Orchestration complete!");
-    println!("Tokenizer: {}", artifacts.tokenizer_dir.display());
+    println!("✅ Setup complete! Tokenizer ready.");
     println!("Config: {}/training.toml", artifacts.run_dir.display());
     println!("\nReady to train with:");
     println!("  cargo run -p training --bin train-streaming -- \\");

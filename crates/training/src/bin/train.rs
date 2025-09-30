@@ -295,18 +295,11 @@ fn run_streaming_training(
         .map(|n| n as usize)
         .unwrap_or(1000);
     
-    println!("🌊 Streaming Training Mode Enabled!");
-    println!("\n📊 Streaming Configuration:");
-    println!("  Dataset: {}", dataset);
-    println!("  Split: {}", split);
-    println!("  Max samples: {:?}", max_samples);
-    println!("  Stream batch size: {}", stream_batch_size);
-    println!();
+    println!("🌊 Streaming mode: {} ({})", dataset, split);
     
     // Create temporary shards by streaming and writing to disk
     // This is a hybrid approach: stream from HF, write temp files, use existing Trainer
-    println!("📥 Streaming data from HuggingFace and creating temporary shards...");
-    println!("   (This allows using the existing Trainer infrastructure)");
+    println!("📥 Streaming data from HuggingFace...");
     
     let temp_dir = std::path::PathBuf::from("/workspace/tmp_streaming_shards");
     fs::create_dir_all(&temp_dir)?;
@@ -318,7 +311,7 @@ fn run_streaming_training(
         max_samples,
     ).map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
     
-    println!("📝 Writing streamed data to temporary shards...");
+    // Writing shards
     let mut stream = corpus.stream()
         .map_err(|e| TrainingError::runtime(format!("Failed to start stream: {}", e)))?;
     
@@ -337,7 +330,7 @@ fn run_streaming_training(
                 drop(file);
             }
             let shard_path = temp_dir.join(format!("shard_{:04}.txt", current_shard));
-            println!("  Creating shard: {}", shard_path.display());
+            // Creating shard
             shard_paths.push(shard_path.clone());
             current_file = Some(std::fs::File::create(&shard_path)?);
             current_shard += 1;
@@ -351,17 +344,19 @@ fn run_streaming_training(
         line_count += 1;
         
         if idx % 10000 == 0 && idx > 0 {
-            println!("  Streamed {} samples...", idx);
+            if idx % 1_000_000 == 0 && idx > 0 {
+                println!("  Streamed {} samples...", idx);
+            }
         }
     }
     
-    println!("✅ Created {} temporary shards with {} total lines", shard_paths.len(), line_count);
+    println!("✅ Streamed {} samples into {} shards", line_count, shard_paths.len());
     
     // Update config to use temporary shards
     config.data.train_shards = shard_paths.clone();
     config.data.validation_shards = shard_paths; // Use same for validation (could split if needed)
     
-    println!("\n🚀 Starting training with streamed data...\n");
+    println!("🚀 Starting training...\n");
     
     // Use standard Trainer with the temporary shards
     let mut trainer = Trainer::new(config)?;
@@ -376,7 +371,7 @@ fn run_streaming_training(
     trainer.train_with_shutdown(|| shutdown_flag.load(Ordering::Relaxed))?;
     
     // Cleanup temporary shards
-    println!("\n🧹 Cleaning up temporary shards...");
+    // Cleaning up
     let _ = fs::remove_dir_all(&temp_dir);
     
     Ok(())
