@@ -198,7 +198,9 @@ impl StreamingTextDataLoader {
                         
                         // Flush when buffer is full
                         if temp_buffer.len() >= buffer_target {
-                            self.flush_buffer(&mut temp_buffer, &mut self.stream_rng)?;
+                            temp_buffer.shuffle(&mut self.stream_rng);
+                            self.tokenize_and_queue(temp_buffer)?;
+                            temp_buffer = Vec::new();
                         }
                     }
                 }
@@ -214,7 +216,8 @@ impl StreamingTextDataLoader {
         
         // Flush any remaining lines
         if !temp_buffer.is_empty() {
-            self.flush_buffer(&mut temp_buffer, &mut self.stream_rng)?;
+            temp_buffer.shuffle(&mut self.stream_rng);
+            self.tokenize_and_queue(temp_buffer)?;
         }
         
         // Handle stream exhaustion
@@ -232,9 +235,7 @@ impl StreamingTextDataLoader {
         Ok(!self.document_queue.is_empty())
     }
 
-    fn flush_buffer(&mut self, buffer: &mut Vec<String>, rng: &mut StdRng) -> Result<()> {
-        buffer.shuffle(rng);
-        
+    fn tokenize_and_queue(&mut self, buffer: Vec<String>) -> Result<()> {
         // Parallel tokenization for speed
         let tokenizer = self.tokenizer.clone();
         let separator_token = self.separator_token_id;
@@ -264,7 +265,6 @@ impl StreamingTextDataLoader {
             self.document_queue.push_back(ids);
         }
         
-        buffer.clear();
         Ok(())
     }
 
