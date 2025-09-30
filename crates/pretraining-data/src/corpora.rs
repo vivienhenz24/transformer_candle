@@ -45,94 +45,77 @@ impl TextCorpus for StreamingCorpus {
     type Stream = CorpusStream;
 
     fn stream(&self) -> io::Result<Self::Stream> {
-        println!("[pretraining-data crate] StreamingCorpus::stream reading {} shards in parallel", self.shards.len());
-        
-        // Read all shards in parallel using rayon
-        let all_lines: Vec<String> = self.shards
-            .par_iter()
-            .enumerate()
-            .flat_map(|(idx, path)| {
-                if idx % 10 == 0 {
-                    println!("[pretraining-data crate] Reading shard batch starting at {}", idx);
-                }
-                
-                match File::open(path) {
-                    Ok(file) => {
-                        let reader = BufReader::new(file);
-                        reader
-                            .lines()
-                            .filter_map(|line| line.ok())
-                            .filter(|line| !line.trim().is_empty())
-                            .collect::<Vec<String>>()
-                    }
-                    Err(e) => {
-                        eprintln!("[pretraining-data crate] Failed to open shard {}: {}", path.display(), e);
-                        Vec::new()
-                    }
-                }
-            })
-            .collect();
-        
-        println!("[pretraining-data crate] Loaded {} total lines from {} shards", all_lines.len(), self.shards.len());
-        
-        CorpusStream::from_lines(all_lines)
+        println!("[pretraining-data crate] StreamingCorpus::stream with {} shards", self.shards.len());
+        CorpusStream::new_batched(self.shards.clone())
     }
 }
 
 pub struct CorpusStream {
     lines: VecDeque<String>,
-    shards: Option<Vec<PathBuf>>,
-    current_reader: Option<BufReader<File>>,
+    shards: Vec<PathBuf>,
     next_shard: usize,
+    batch_size: usize,
 }
 
 impl CorpusStream {
     fn from_lines(lines: Vec<String>) -> io::Result<Self> {
         Ok(Self {
             lines: VecDeque::from(lines),
-            shards: None,
-            current_reader: None,
+            shards: Vec::new(),
             next_shard: 0,
+            batch_size: 0,
         })
     }
     
-    fn new_parallel(shards: Vec<PathBuf>) -> io::Result<Self> {
-        println!("[pretraining-data crate] Using parallel streaming approach");
+    fn new_batched(shards: Vec<PathBuf>) -> io::Result<Self> {
+        println!("[pretraining-data crate] Using batched parallel streaming (10 shards at a time)");
         let mut stream = Self {
             lines: VecDeque::new(),
-            shards: Some(shards),
-            current_reader: None,
+            shards,
             next_shard: 0,
+            batch_size: 10, // Process 10 shards in parallel at a time
         };
-        stream.open_next_shard()?;
+        stream.load_next_batch()?;
         Ok(stream)
     }
     
-    fn open_next_shard(&mut self) -> io::Result<bool> {
-        let shards = self.shards.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "No shards available")
-        })?;
-        
-        while self.next_shard < shards.len() {
-            let path = &shards[self.next_shard];
-            self.next_shard += 1;
-            match File::open(path) {
-                Ok(file) => {
-                    self.current_reader = Some(BufReader::new(file));
-                    println!(
-                        "[pretraining-data crate] StreamingCorpus opening shard {}: {}",
-                        self.next_shard - 1,
-                        path.display()
-                    );
-                    return Ok(true);
-                }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
+    fn load_next_batch(&mut self) -> io::Result<()> {
+        if self.next_shard >= self.shards.len() {
+            return Ok(());
         }
-
-        self.current_reader = None;
-        Ok(false)
+        
+        let batch_end = (self.next_shard + self.batch_size).min(self.shards.len());
+        let batch = &self.shards[self.next_shard..batch_end];
+        
+        println!(
+            "[pretraining-data crate] Loading shard batch {}-{} of {} (parallel)",
+            self.next_shard,
+            batch_end - 1,
+            self.shards.len()
+        );
+        
+        // Read this batch of shards in parallel
+        let batch_lines: Vec<String> = batch
+            .par_iter()
+            .flat_map(|path| {
+                match File::open(path) {
+                    Ok(file) => {
+                        BufReader::new(file)
+                            .lines()
+                            .filter_map(|line| line.ok())
+                            .filter(|line| !line.trim().is_empty())
+                            .collect::<Vec<String>>()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            })
+            .collect();
+        
+        self.lines.extend(batch_lines);
+        self.next_shard = batch_end;
+        
+        println!("[pretraining-data crate] Batch loaded: {} lines in buffer", self.lines.len());
+        Ok(())
     }
 }
 
@@ -140,41 +123,15 @@ impl Iterator for CorpusStream {
     type Item = io::Result<String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // If we have pre-loaded lines, use those first
-        if let Some(line) = self.lines.pop_front() {
-            return Some(Ok(line));
-        }
-        
-        // Otherwise, stream from files
-        if self.shards.is_some() {
-            loop {
-                let reader = match self.current_reader.as_mut() {
-                    Some(reader) => reader,
-                    None => return None,
-                };
-
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => match self.open_next_shard() {
-                        Ok(true) => continue,
-                        Ok(false) => return None,
-                        Err(err) => return Some(Err(err)),
-                    },
-                    Ok(_) => {
-                        while line.ends_with(['\n', '\r']) {
-                            line.pop();
-                        }
-                        if !line.trim().is_empty() {
-                            return Some(Ok(line));
-                        }
-                        // Continue to next line if empty
-                    }
-                    Err(err) => return Some(Err(err)),
-                }
+        // If buffer is empty, load next batch
+        if self.lines.is_empty() && self.next_shard < self.shards.len() {
+            if let Err(e) = self.load_next_batch() {
+                return Some(Err(e));
             }
         }
         
-        None
+        // Return next line from buffer
+        self.lines.pop_front().map(Ok)
     }
 }
 
