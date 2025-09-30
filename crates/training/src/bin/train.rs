@@ -308,7 +308,7 @@ fn run_streaming_training(
     println!("📥 Streaming data from HuggingFace and creating temporary shards...");
     println!("   (This allows using the existing Trainer infrastructure)");
     
-    let temp_dir = std::path::PathBuf::from("/tmp/streaming_shards");
+    let temp_dir = std::path::PathBuf::from("/workspace/tmp_streaming_shards");
     fs::create_dir_all(&temp_dir)?;
     
     let corpus = HuggingFaceStreamingCorpus::new(
