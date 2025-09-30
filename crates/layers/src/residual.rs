@@ -69,7 +69,7 @@ impl Clone for DropoutMode {
             DropoutMode::Enabled { probability, rng } => {
                 let state = match rng.lock() {
                     Ok(guard) => guard.clone(),
-                    Err(poisoned) => {
+                    Err(_poisoned) => {
                         // If the mutex is poisoned, we can't recover the state
                         // Create a new Lcg64 with a default seed
                         Lcg64::new(0)
@@ -239,7 +239,7 @@ impl Residual {
 
 /// Simple 64-bit linear congruential generator for deterministic dropout masks.
 #[derive(Debug, Clone)]
-struct Lcg64 {
+pub(crate) struct Lcg64 {
     state: u64,
 }
 

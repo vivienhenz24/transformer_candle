@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use pretraining_data::sharding::shard_text_by_lines;
+use pretraining_data::TextCorpus;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokenizer::config::{
@@ -1487,27 +1488,56 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
 
     println!("Collected {} samples total. Training tokenizer...", texts.len());
 
+    // Write texts to temporary file for tokenizer training
+    let temp_input = output_dir.join("temp_streaming_input.txt");
+    let mut file = File::create(&temp_input)?;
+    for text in &texts {
+        writeln!(file, "{}", text)?;
+    }
+    file.flush()?;
+    println!("Wrote training data to temporary file: {}", temp_input.display());
+
     // Configure tokenizer training
     let config = TokenizerTrainConfig {
-        model: ModelCfg {
+        model: TokenizerModelCfg {
             vocab_size: args.vocab_size,
-        },
-        training: TrainingCfg {
+            min_frequency: 2,
+            dropout: None,
             special_tokens: vec![
                 "<|endoftext|>".to_string(),
                 "<|pad|>".to_string(),
             ],
+            byte_fallback_on_decode: true,
         },
-        artifacts: ArtifactsCfg {
-            output_dir: output_dir.to_path_buf(),
+        pretokenizer: TokenizerByteLevelCfg {
+            add_prefix_space: false,
+            trim_offsets: true,
+            use_regex: true,
         },
-        ..Default::default()
+        postprocessor: None,
+        training: Some(TokenizerTrainingCfg {
+            inputs: vec![temp_input.clone()],
+            seed: 42,
+            shuffle: true,
+            max_lines: Some(texts.len()),
+            num_threads: Some(8),
+        }),
+        artifacts: TokenizerArtifactsCfg {
+            dir: output_dir.to_path_buf(),
+            tokenizer_json: Some(output_dir.join("tokenizer.json")),
+            vocab_json: Some(output_dir.join("vocab.json")),
+            merges_txt: Some(output_dir.join("merges.txt")),
+            manifest: None,
+        },
     };
 
     // Train tokenizer
     fs::create_dir_all(output_dir)?;
-    train_bbpe(&config, &texts)
+    let _tokenizer = train_bbpe(&config)
         .map_err(|e| PipelineError::Tokenizer(e))?;
+    
+    // Clean up temp file
+    let _ = fs::remove_file(&temp_input);
 
     let tokenizer_path = output_dir.join("tokenizer.json");
     println!("✅ Tokenizer trained and saved to {}", tokenizer_path.display());
@@ -1538,8 +1568,6 @@ fn copy_tokenizer_artifacts(source: &Path, dest_dir: &Path) -> Result<()> {
 }
 
 fn generate_streaming_config(args: &Args, artifacts: &PipelineArtifacts, experiment: &str) -> Result<()> {
-    use training::config::*;
-
     // Write streaming metadata
     let metadata_path = artifacts.run_dir.join("streaming_config.json");
     let metadata = serde_json::json!({

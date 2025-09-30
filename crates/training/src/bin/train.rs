@@ -269,14 +269,12 @@ fn assign_at_path(
 }
 
 fn run_streaming_training(
-    config: TrainingConfig,
+    mut config: TrainingConfig,
     streaming_config_path: &std::path::Path,
 ) -> Result<(), TrainingError> {
-    use pretraining_data::HuggingFaceStreamingCorpus;
-    use training::data::{StreamingTextDataLoader, BlockingDataLoader};
-    use candle_core::Device;
     use std::fs;
-    use std::sync::Arc;
+    use pretraining_data::HuggingFaceStreamingCorpus;
+    use pretraining_data::TextCorpus;
     
     // Load streaming config
     let streaming_json = fs::read_to_string(streaming_config_path)
@@ -297,15 +295,22 @@ fn run_streaming_training(
         .map(|n| n as usize)
         .unwrap_or(1000);
     
-    println!("📊 Streaming Training Configuration:");
+    println!("🌊 Streaming Training Mode Enabled!");
+    println!("\n📊 Streaming Configuration:");
     println!("  Dataset: {}", dataset);
     println!("  Split: {}", split);
     println!("  Max samples: {:?}", max_samples);
     println!("  Stream batch size: {}", stream_batch_size);
     println!();
     
-    // Create streaming corpus
-    println!("🌊 Creating HuggingFace streaming corpus...");
+    // Create temporary shards by streaming and writing to disk
+    // This is a hybrid approach: stream from HF, write temp files, use existing Trainer
+    println!("📥 Streaming data from HuggingFace and creating temporary shards...");
+    println!("   (This allows using the existing Trainer infrastructure)");
+    
+    let temp_dir = std::path::PathBuf::from("/tmp/streaming_shards");
+    fs::create_dir_all(&temp_dir)?;
+    
     let corpus = HuggingFaceStreamingCorpus::new(
         dataset.to_string(),
         split.to_string(),
@@ -313,33 +318,66 @@ fn run_streaming_training(
         max_samples,
     ).map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
     
-    // Load tokenizer
-    let tokenizer_path = config.tokenizer.tokenizer_json.clone();
-    println!("📖 Loading tokenizer from {}...", tokenizer_path.display());
-    let tokenizer = Arc::new(
-        tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| TrainingError::runtime(format!("Failed to load tokenizer: {}", e)))?
-    );
+    println!("📝 Writing streamed data to temporary shards...");
+    let mut stream = corpus.stream()
+        .map_err(|e| TrainingError::runtime(format!("Failed to start stream: {}", e)))?;
     
-    // Set up device
-    let device = Device::cuda_if_available(0)
-        .map_err(|e| TrainingError::runtime(format!("Failed to set up device: {}", e)))?;
+    let mut shard_paths = Vec::new();
+    let mut current_shard = 0;
+    let lines_per_shard = 100_000;
+    let mut current_file = None;
+    let mut line_count = 0;
     
-    println!("🖥️  Using device: {:?}", device);
+    for (idx, result) in stream.enumerate() {
+        let text = result.map_err(|e| TrainingError::runtime(format!("Stream error: {}", e)))?;
+        
+        // Open new shard if needed
+        if line_count % lines_per_shard == 0 {
+            if let Some(file) = current_file.take() {
+                drop(file);
+            }
+            let shard_path = temp_dir.join(format!("shard_{:04}.txt", current_shard));
+            println!("  Creating shard: {}", shard_path.display());
+            shard_paths.push(shard_path.clone());
+            current_file = Some(std::fs::File::create(&shard_path)?);
+            current_shard += 1;
+        }
+        
+        if let Some(ref mut file) = current_file {
+            use std::io::Write;
+            writeln!(file, "{}", text)?;
+        }
+        
+        line_count += 1;
+        
+        if idx % 10000 == 0 && idx > 0 {
+            println!("  Streamed {} samples...", idx);
+        }
+    }
     
-    // Create data loader - this demonstrates it works!
-    println!("📦 Creating streaming data loader...");
-    println!("  Sequence length: {}", config.data.sequence_length);
-    println!("  Batch size: {}", config.data.batch_size);
-    println!("  Gradient accumulation: {}", config.data.gradient_accumulation_steps);
+    println!("✅ Created {} temporary shards with {} total lines", shard_paths.len(), line_count);
     
-    println!("\n✅ Streaming training configured successfully!");
-    println!("\n📝 Note: The streaming data loader is ready.");
-    println!("To complete full training, the Trainer class needs to be modified");
-    println!("to accept a HuggingFaceStreamingCorpus instead of file shards.");
-    println!("\nBut you CAN train now by:");
-    println!("1. Running orchestrate with --stream to create tokenizer");
-    println!("2. The infrastructure is all in place!");
+    // Update config to use temporary shards
+    config.data.train_shards = shard_paths.clone();
+    config.data.validation_shards = shard_paths; // Use same for validation (could split if needed)
+    
+    println!("\n🚀 Starting training with streamed data...\n");
+    
+    // Use standard Trainer with the temporary shards
+    let mut trainer = Trainer::new(config)?;
+    
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let handler_flag = shutdown_flag.clone();
+    ctrlc::set_handler(move || {
+        handler_flag.store(true, Ordering::Relaxed);
+    })
+    .map_err(|err| TrainingError::runtime(format!("failed to install signal handler: {err}")))?;
+
+    trainer.train_with_shutdown(|| shutdown_flag.load(Ordering::Relaxed))?;
+    
+    // Cleanup temporary shards
+    println!("\n🧹 Cleaning up temporary shards...");
+    let _ = fs::remove_dir_all(&temp_dir);
     
     Ok(())
 }
