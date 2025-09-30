@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use rayon::prelude::*;
 
 /// Trait for corpus types that can stream text data
 pub trait TextCorpus {
@@ -43,48 +45,43 @@ impl TextCorpus for StreamingCorpus {
     type Stream = CorpusStream;
 
     fn stream(&self) -> io::Result<Self::Stream> {
-        println!("[pretraining-data crate] StreamingCorpus::stream creating iterator");
-        CorpusStream::new(self.shards.clone())
+        println!("[pretraining-data crate] StreamingCorpus::stream creating parallel iterator for {} shards", self.shards.len());
+        
+        // Read all shards in parallel
+        let all_lines: Vec<String> = self.shards
+            .par_iter()
+            .enumerate()
+            .flat_map(|(idx, path)| {
+                println!("[pretraining-data crate] StreamingCorpus opening shard {}: {}", idx, path.display());
+                
+                match File::open(path) {
+                    Ok(file) => {
+                        let reader = BufReader::new(file);
+                        reader.lines()
+                            .filter_map(|line| line.ok())
+                            .filter(|line| !line.trim().is_empty())
+                            .collect::<Vec<String>>()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            })
+            .collect();
+        
+        println!("[pretraining-data crate] StreamingCorpus loaded {} total lines from {} shards", all_lines.len(), self.shards.len());
+        
+        Ok(CorpusStream::from_lines(all_lines))
     }
 }
 
 pub struct CorpusStream {
-    shards: Vec<PathBuf>,
-    current_reader: Option<BufReader<File>>,
-    next_shard: usize,
+    lines: VecDeque<String>,
 }
 
 impl CorpusStream {
-    fn new(shards: Vec<PathBuf>) -> io::Result<Self> {
-        let mut stream = Self {
-            shards,
-            current_reader: None,
-            next_shard: 0,
-        };
-        stream.open_next_shard()?;
-        Ok(stream)
-    }
-
-    fn open_next_shard(&mut self) -> io::Result<bool> {
-        while self.next_shard < self.shards.len() {
-            let path = &self.shards[self.next_shard];
-            self.next_shard += 1;
-            match File::open(path) {
-                Ok(file) => {
-                    self.current_reader = Some(BufReader::new(file));
-                    println!(
-                        "[pretraining-data crate] StreamingCorpus opening shard {}",
-                        path.display()
-                    );
-                    return Ok(true);
-                }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
-        }
-
-        self.current_reader = None;
-        Ok(false)
+    fn from_lines(lines: Vec<String>) -> io::Result<Self> {
+        Ok(Self {
+            lines: VecDeque::from(lines),
+        })
     }
 }
 
@@ -92,28 +89,7 @@ impl Iterator for CorpusStream {
     type Item = io::Result<String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let reader = match self.current_reader.as_mut() {
-                Some(reader) => reader,
-                None => return None,
-            };
-
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => match self.open_next_shard() {
-                    Ok(true) => continue,
-                    Ok(false) => return None,
-                    Err(err) => return Some(Err(err)),
-                },
-                Ok(_) => {
-                    while line.ends_with(['\n', '\r']) {
-                        line.pop();
-                    }
-                    return Some(Ok(line));
-                }
-                Err(err) => return Some(Err(err)),
-            }
-        }
+        self.lines.pop_front().map(Ok)
     }
 }
 

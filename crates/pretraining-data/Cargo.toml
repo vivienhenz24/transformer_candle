@@ -9,6 +9,7 @@ path = "src/bin/preprocess.rs"
 
 [dependencies]
 serde_json = "1.0"
+rayon = "1.10"
 
 [dev-dependencies]
 tempfile = "3.0"
