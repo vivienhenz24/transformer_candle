@@ -838,7 +838,9 @@ impl Trainer {
                 break;
             }
 
-            let input = match Tensor::from_slice(&context, (1, context.len()), &self.device) {
+            // Convert u32 to i64 to avoid negative token ID issues
+            let context_i64: Vec<i64> = context.iter().map(|&t| t as i64).collect();
+            let input = match Tensor::from_slice(&context_i64, (1, context_i64.len()), &self.device) {
                 Ok(t) => t,
                 Err(_) => break,
             };

@@ -159,6 +159,9 @@ impl TokenEmbedding {
         println!("DEBUG: Token tensor shape: {:?}, dtype: {:?}", flat_ids.shape(), flat_ids.dtype());
         
         let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
+        let max_id_debug = flat_ids.max_all()?.to_scalar::<i64>()?;
+        println!("DEBUG: min_all() = {}, max_all() = {}", min_id, max_id_debug);
+        
         if min_id < 0 {
             // Debug: Print first few values and find negative ones
             if flat_ids.elem_count() > 0 {
