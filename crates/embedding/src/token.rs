@@ -155,8 +155,16 @@ impl TokenEmbedding {
             return Ok(());
         }
 
+        // Debug: Print tensor info
+        println!("DEBUG: Token tensor shape: {:?}, dtype: {:?}", flat_ids.shape(), flat_ids.dtype());
+        
         let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
         if min_id < 0 {
+            // Debug: Print first few values
+            if flat_ids.elem_count() > 0 {
+                let first_10 = flat_ids.flatten_all()?.narrow(0, 0, (flat_ids.elem_count().min(10) as usize))?;
+                println!("DEBUG: First 10 token values: {:?}", first_10.to_vec1::<i64>());
+            }
             return Err(Error::Msg(format!(
                 "encountered negative token id {} (minimum)",
                 min_id
