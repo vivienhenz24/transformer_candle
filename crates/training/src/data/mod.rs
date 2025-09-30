@@ -5,6 +5,7 @@ use futures::future::BoxFuture;
 use pretraining_data::corpora::StreamingCorpus;
 use pretraining_data::TextCorpus;
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+use rayon::prelude::*;
 use tokenizers::Tokenizer;
 
 use crate::TrainingError;
@@ -229,21 +230,37 @@ impl StreamingTextDataLoader {
 
     fn flush_buffer(&mut self, buffer: &mut Vec<String>, rng: &mut StdRng) -> Result<()> {
         buffer.shuffle(rng);
-        for text in buffer.drain(..) {
-            let encoding = self
-                .tokenizer
-                .encode(text, true)
-                .map_err(|err| TrainingError::runtime(format!("tokenization failed: {}", err)))?;
-            let mut ids = encoding.get_ids().to_vec();
-            if let Some(token) = self.separator_token_id {
-                ids.push(token);
-            }
-            if !ids.is_empty() {
-                self.document_queue.push_back(ids);
-                let _total = self.document_queue.len();
-                // Removed verbose buffering logs
-            }
+        
+        // Parallel tokenization for speed
+        let tokenizer = self.tokenizer.clone();
+        let separator_token = self.separator_token_id;
+        
+        let tokenized: Vec<Vec<u32>> = buffer
+            .par_iter()
+            .filter_map(|text| {
+                match tokenizer.encode(text.as_str(), true) {
+                    Ok(encoding) => {
+                        let mut ids = encoding.get_ids().to_vec();
+                        if let Some(token) = separator_token {
+                            ids.push(token);
+                        }
+                        if !ids.is_empty() {
+                            Some(ids)
+                        } else {
+                            None
+                        }
+                    }
+                    Err(_) => None,
+                }
+            })
+            .collect();
+        
+        // Add to queue
+        for ids in tokenized {
+            self.document_queue.push_back(ids);
         }
+        
+        buffer.clear();
         Ok(())
     }
 
