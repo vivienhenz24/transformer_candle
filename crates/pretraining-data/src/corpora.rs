@@ -72,12 +72,14 @@ impl CorpusStream {
     
     fn new_parallel(shards: Vec<PathBuf>) -> io::Result<Self> {
         println!("[pretraining-data crate] Using parallel streaming approach");
-        Ok(Self {
+        let mut stream = Self {
             lines: VecDeque::new(),
             shards: Some(shards),
             current_reader: None,
             next_shard: 0,
-        })
+        };
+        stream.open_next_shard()?;
+        Ok(stream)
     }
     
     fn open_next_shard(&mut self) -> io::Result<bool> {
