@@ -69,7 +69,7 @@ impl TextCorpus for StreamingCorpus {
         
         println!("[pretraining-data crate] StreamingCorpus loaded {} total lines from {} shards", all_lines.len(), self.shards.len());
         
-        Ok(CorpusStream::from_lines(all_lines))
+        CorpusStream::from_lines(all_lines)
     }
 }
 
