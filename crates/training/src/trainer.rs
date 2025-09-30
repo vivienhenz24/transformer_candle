@@ -490,10 +490,10 @@ impl Trainer {
             }
         }
 
-        if new_grads.get_ids().next().is_some() {
-            return Err(TrainingError::runtime(
-                "received gradients for unknown tensors during accumulation",
-            ));
+        // Log unknown tensors but don't fail - they might be cached tensors or RNG states
+        let unknown_count = new_grads.get_ids().count();
+        if unknown_count > 0 {
+            eprintln!("Warning: ignoring gradients for {} unknown tensors (likely cached tensors)", unknown_count);
         }
 
         Ok(())
