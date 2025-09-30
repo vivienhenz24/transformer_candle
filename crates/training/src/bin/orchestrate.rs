@@ -322,6 +322,7 @@ enum PipelineError {
     Tokenizer(tokenizer::errors::Error),
     Training(TrainingError),
     Toml(toml::ser::Error),
+    Json(serde_json::Error),
     CtrlC(ctrlc::Error),
     Invalid(String),
 }
@@ -333,6 +334,7 @@ impl std::fmt::Display for PipelineError {
             PipelineError::Tokenizer(err) => write!(f, "tokenizer error: {err}"),
             PipelineError::Training(err) => write!(f, "training error: {err}"),
             PipelineError::Toml(err) => write!(f, "failed to serialize config: {err}"),
+            PipelineError::Json(err) => write!(f, "failed to serialize to json: {err}"),
             PipelineError::CtrlC(err) => write!(f, "failed to install signal handler: {err}"),
             PipelineError::Invalid(msg) => write!(f, "invalid configuration: {msg}"),
         }
@@ -368,6 +370,12 @@ impl From<toml::ser::Error> for PipelineError {
 impl From<serde_yaml::Error> for PipelineError {
     fn from(value: serde_yaml::Error) -> Self {
         PipelineError::Invalid(format!("failed to serialize config to yaml: {value}"))
+    }
+}
+
+impl From<serde_json::Error> for PipelineError {
+    fn from(value: serde_json::Error) -> Self {
+        PipelineError::Json(value)
     }
 }
 

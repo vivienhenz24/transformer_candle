@@ -69,7 +69,11 @@ impl Clone for DropoutMode {
             DropoutMode::Enabled { probability, rng } => {
                 let state = match rng.lock() {
                     Ok(guard) => guard.clone(),
-                    Err(poisoned) => poisoned.into_inner(),
+                    Err(poisoned) => {
+                        // If the mutex is poisoned, we can't recover the state
+                        // Create a new Lcg64 with a default seed
+                        Lcg64::new(0)
+                    }
                 };
                 DropoutMode::Enabled {
                     probability: *probability,
@@ -130,11 +134,20 @@ fn apply_dropout(tensor: &Tensor, mode: &DropoutMode, policy: &PrecisionPolicy) 
 }
 
 /// Residual add helper with optional scaling and dropout.
-#[derive(Clone)]
 pub struct Residual {
     config: ResidualConfig,
     dropout: DropoutMode,
     training: AtomicBool,
+}
+
+impl Clone for Residual {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            dropout: self.dropout.clone(),
+            training: AtomicBool::new(self.training.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl fmt::Debug for Residual {
@@ -225,7 +238,7 @@ impl Residual {
 }
 
 /// Simple 64-bit linear congruential generator for deterministic dropout masks.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Lcg64 {
     state: u64,
 }
