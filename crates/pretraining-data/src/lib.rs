@@ -5,7 +5,7 @@ pub mod preprocessing;
 pub mod sharding;
 
 // Re-export main types
-pub use corpora::{StreamingCorpus, HuggingFaceStreamingCorpus};
+pub use corpora::{TextCorpus, StreamingCorpus, HuggingFaceStreamingCorpus};
 
 /// Initialize the pretraining data module
 pub fn init() {
