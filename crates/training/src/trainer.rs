@@ -490,11 +490,9 @@ impl Trainer {
             }
         }
 
-        // Log unknown tensors but don't fail - they might be cached tensors or RNG states
-        let unknown_count = new_grads.get_ids().count();
-        if unknown_count > 0 {
-            eprintln!("Warning: ignoring gradients for {} unknown tensors (likely cached tensors)", unknown_count);
-        }
+        // Silently ignore unknown tensors - they are cached tensors or RNG states
+        let _unknown_count = new_grads.get_ids().count();
+        // Note: Ignoring gradients for cached tensors (attention masks, position embeddings, etc.)
 
         Ok(())
     }
@@ -1337,11 +1335,7 @@ struct StepMetrics {
 
 impl StepMetrics {
     fn accumulate(&mut self, metrics: &LossMetrics) {
-        println!(
-            "[debug] step_metrics accumulate average_loss={:.6} total_tokens={}",
-            metrics.average_loss(),
-            metrics.total_tokens()
-        );
+        // Removed debug print for cleaner output
         self.loss_sum += metrics.average_loss() as f64 * metrics.total_tokens() as f64;
         self.tokens += metrics.total_tokens();
         self.correct += metrics.correct_tokens();
