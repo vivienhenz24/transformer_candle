@@ -219,7 +219,7 @@ impl StreamingTextDataLoader {
             }
             if !ids.is_empty() {
                 self.document_queue.push_back(ids);
-                let total = self.document_queue.len();
+                let _total = self.document_queue.len();
                 // Removed verbose buffering logs
             }
         }
@@ -299,8 +299,10 @@ impl StreamingTextDataLoader {
             }
         }
 
+        // Convert u32 tokens to i64 to avoid negative token ID issues
+        let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
         let batch_tokens =
-            Tensor::from_slice(&tokens, (self.micro_batch_size, target_len), &self.device)
+            Tensor::from_slice(&tokens_i64, (self.micro_batch_size, target_len), &self.device)
                 .map_err(|err| {
                     TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
                 })?;
