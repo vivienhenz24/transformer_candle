@@ -45,11 +45,47 @@ impl TextCorpus for StreamingCorpus {
     type Stream = CorpusStream;
 
     fn stream(&self) -> io::Result<Self::Stream> {
-        println!("[pretraining-data crate] StreamingCorpus::stream creating parallel iterator for {} shards", self.shards.len());
+        println!("[pretraining-data crate] StreamingCorpus::stream reading {} shards in parallel", self.shards.len());
         
-        // Use the original streaming approach but with parallel shard opening
-        // This avoids loading everything into memory at once
-        CorpusStream::new_parallel(self.shards.clone())
+        // Read all shards in parallel using rayon
+        use std::sync::Mutex;
+        let lines_mutex = Arc::new(Mutex::new(Vec::new()));
+        
+        self.shards
+            .par_iter()
+            .enumerate()
+            .for_each(|(idx, path)| {
+                if idx % 10 == 0 {
+                    println!("[pretraining-data crate] Reading shard batch starting at {}", idx);
+                }
+                
+                match File::open(path) {
+                    Ok(file) => {
+                        let reader = BufReader::new(file);
+                        let shard_lines: Vec<String> = reader
+                            .lines()
+                            .filter_map(|line| line.ok())
+                            .filter(|line| !line.trim().is_empty())
+                            .collect();
+                        
+                        if let Ok(mut lines) = lines_mutex.lock() {
+                            lines.extend(shard_lines);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[pretraining-data crate] Failed to open shard {}: {}", path.display(), e);
+                    }
+                }
+            });
+        
+        let all_lines = Arc::try_unwrap(lines_mutex)
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone())
+            .into_inner()
+            .unwrap();
+        
+        println!("[pretraining-data crate] Loaded {} total lines from {} shards", all_lines.len(), self.shards.len());
+        
+        CorpusStream::from_lines(all_lines)
     }
 }
 

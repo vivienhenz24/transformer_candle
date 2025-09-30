@@ -174,7 +174,10 @@ impl StreamingTextDataLoader {
         let mut buffer = Vec::with_capacity(buffer_target);
         self.document_queue.clear();
 
-        // Preparing epoch
+        println!("📚 Preparing epoch {} (loading and tokenizing all shards)...", epoch);
+        let start_time = std::time::Instant::now();
+        let mut line_count = 0;
+        let progress_interval = 1_000_000; // Report every 1M lines
 
         while let Some(line) = stream.next() {
             let line = line?;
@@ -182,6 +185,20 @@ impl StreamingTextDataLoader {
                 continue;
             }
             buffer.push(line);
+            line_count += 1;
+            
+            // Progress reporting
+            if line_count % progress_interval == 0 {
+                let elapsed = start_time.elapsed().as_secs();
+                let rate = if elapsed > 0 { line_count / elapsed as usize } else { 0 };
+                println!(
+                    "   📄 Processed {:.1}M lines ({} docs queued, {} lines/sec)",
+                    line_count as f64 / 1_000_000.0,
+                    self.document_queue.len(),
+                    rate
+                );
+            }
+            
             if buffer.len() >= buffer_target {
                 self.flush_buffer(&mut buffer, &mut rng)?;
             }
@@ -195,10 +212,14 @@ impl StreamingTextDataLoader {
             return Ok(false);
         }
 
+        let total_time = start_time.elapsed().as_secs();
         println!(
-            "📚 Epoch {} ready: {} documents loaded",
+            "✅ Epoch {} ready: {} documents from {:.1}M lines (took {}m {}s)",
             epoch,
-            self.document_queue.len()
+            self.document_queue.len(),
+            line_count as f64 / 1_000_000.0,
+            total_time / 60,
+            total_time % 60
         );
 
         self.current_epoch = epoch;
