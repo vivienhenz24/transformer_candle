@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
 use std::collections::VecDeque;
-use std::sync::Arc;
 use rayon::prelude::*;
 
 /// Trait for corpus types that can stream text data
@@ -58,15 +57,6 @@ pub struct CorpusStream {
 }
 
 impl CorpusStream {
-    fn from_lines(lines: Vec<String>) -> io::Result<Self> {
-        Ok(Self {
-            lines: VecDeque::from(lines),
-            shards: Vec::new(),
-            next_shard: 0,
-            batch_size: 0,
-        })
-    }
-    
     fn new_batched(shards: Vec<PathBuf>) -> io::Result<Self> {
         println!("[pretraining-data crate] Using batched parallel streaming (10 shards at a time)");
         let mut stream = Self {
