@@ -3,6 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 use candle_core::{Device, Tensor};
 use futures::future::BoxFuture;
 use pretraining_data::corpora::StreamingCorpus;
+use pretraining_data::TextCorpus;
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use tokenizers::Tokenizer;
 
