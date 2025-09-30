@@ -163,6 +163,7 @@ class ShardWriter:
         else:
             self.current_file = open(self.current_path, "w", encoding="utf-8")
         self.lines_in_current = 0
+        print(f"Created new shard: {filename}", file=sys.stderr)
         self.index += 1
 
     def _close_current(self) -> None:
@@ -223,9 +224,15 @@ def stream_fineweb(args: argparse.Namespace) -> None:
     cap, val_ratio = compute_mode_defaults(args)
     rng = random.Random(args.seed)
 
+    print(f"Starting FineWeb download with cap={cap}, val_ratio={val_ratio}", file=sys.stderr)
+    print(f"Train output: {args.train_output}", file=sys.stderr)
+    print(f"Val output: {args.val_output}", file=sys.stderr)
+
     configure_hf_env(args.cache_root, args.hf_token)
 
+    print("Loading dataset...", file=sys.stderr)
     dataset = load_dataset(args.dataset, split=args.split, streaming=True)
+    print("Dataset loaded, starting to stream...", file=sys.stderr)
 
     train_writer: Optional[ShardWriter] = None
     val_writer: Optional[ShardWriter] = None
@@ -248,12 +255,18 @@ def stream_fineweb(args: argparse.Namespace) -> None:
         )
 
     processed = 0
+    last_print = 0
     for sample in dataset:
         text = sample.get("text") if isinstance(sample, dict) else None
         if not text:
             continue
 
         processed += 1
+
+        # Print progress every 1000 samples
+        if processed - last_print >= 1000:
+            print(f"Processed {processed:,} samples...", file=sys.stderr)
+            last_print = processed
 
         should_take_val = write_val and rng.random() < val_ratio
         if should_take_val and val_writer is not None:
@@ -262,6 +275,7 @@ def stream_fineweb(args: argparse.Namespace) -> None:
             train_writer.write(text)
 
         if cap is not None and processed >= cap:
+            print(f"Reached cap of {cap:,} samples, stopping...", file=sys.stderr)
             break
 
     manifests = {}
