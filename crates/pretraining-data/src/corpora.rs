@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 
 /// Trait for corpus types that can stream text data
