@@ -78,9 +78,8 @@ pub struct StreamingTextDataLoader {
     separator_token_id: Option<u32>,
     token_buffer: VecDeque<u32>,
     document_queue: VecDeque<Vec<u32>>,
-    active_stream: Option<Box<dyn Iterator<Item = std::io::Result<String>>>>,
+    active_stream: Option<Box<dyn Iterator<Item = std::io::Result<String>> + Send>>,
     stream_rng: StdRng,
-    line_buffer: Vec<String>,
 }
 
 impl StreamingTextDataLoader {
@@ -144,7 +143,6 @@ impl StreamingTextDataLoader {
             document_queue: VecDeque::new(),
             active_stream: None,
             stream_rng: StdRng::seed_from_u64(seed),
-            line_buffer: Vec::with_capacity(shuffle_buffer_size.unwrap_or(4096)),
         };
 
         // Initialize streaming - load enough for initial shuffle buffer
@@ -180,21 +178,27 @@ impl StreamingTextDataLoader {
             self.active_stream = Some(Box::new(self.corpus.stream()?));
         }
         
-        let stream = self.active_stream.as_mut().unwrap();
         let buffer_target = self.shuffle_buffer_size.max(self.micro_batch_size).max(1);
         
-        // Load only enough lines to fill the shuffle buffer
+        // Collect lines from stream
+        let mut temp_buffer = Vec::new();
+        let mut stream_exhausted = false;
         let mut lines_loaded = 0;
+        
         while lines_loaded < buffer_target && self.document_queue.len() < buffer_target {
+            // Take stream temporarily to avoid borrow conflicts
+            let mut stream = self.active_stream.take().unwrap();
+            
             match stream.next() {
                 Some(Ok(line)) => {
+                    self.active_stream = Some(stream);
                     if !line.is_empty() {
-                        self.line_buffer.push(line);
+                        temp_buffer.push(line);
                         lines_loaded += 1;
                         
                         // Flush when buffer is full
-                        if self.line_buffer.len() >= buffer_target {
-                            self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
+                        if temp_buffer.len() >= buffer_target {
+                            self.flush_buffer(&mut temp_buffer, &mut self.stream_rng)?;
                         }
                     }
                 }
@@ -202,27 +206,27 @@ impl StreamingTextDataLoader {
                     return Err(TrainingError::runtime(format!("stream error: {}", e)));
                 }
                 None => {
-                    // Stream exhausted - flush remaining and prepare for next epoch
-                    if !self.line_buffer.is_empty() {
-                        self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
-                    }
-                    if self.document_queue.is_empty() {
-                        // No more data available
-                        return Ok(false);
-                    }
-                    // Reset stream for next epoch
-                    self.active_stream = None;
-                    self.current_epoch += 1;
-                    self.prepared_epoch = self.current_epoch + 1;
-                    println!("✅ Epoch {} complete, starting epoch {}", self.current_epoch - 1, self.current_epoch);
-                    return Ok(true);
+                    stream_exhausted = true;
+                    break;
                 }
             }
         }
         
         // Flush any remaining lines
-        if !self.line_buffer.is_empty() {
-            self.flush_buffer(&mut self.line_buffer, &mut self.stream_rng)?;
+        if !temp_buffer.is_empty() {
+            self.flush_buffer(&mut temp_buffer, &mut self.stream_rng)?;
+        }
+        
+        // Handle stream exhaustion
+        if stream_exhausted {
+            if self.document_queue.is_empty() {
+                return Ok(false);
+            }
+            // Reset stream for next epoch
+            self.active_stream = None;
+            self.current_epoch += 1;
+            self.prepared_epoch = self.current_epoch + 1;
+            println!("✅ Epoch {} complete, starting epoch {}", self.current_epoch - 1, self.current_epoch);
         }
         
         Ok(!self.document_queue.is_empty())
