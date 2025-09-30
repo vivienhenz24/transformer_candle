@@ -17,6 +17,8 @@ fn build_config(rope_mode: RopeMode) -> ModelConfig {
         device: Device::Cpu,
         attn_dropout_p: None,
         residual_dropout_p: None,
+        gradient_checkpointing: false, // Disable for tests
+        checkpoint_every_n_layers: 1,
     }
 }
 

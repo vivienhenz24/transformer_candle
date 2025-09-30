@@ -17,6 +17,8 @@ pub struct ModelConfig {
     pub device: Device,
     pub attn_dropout_p: Option<f32>,
     pub residual_dropout_p: Option<f32>,
+    pub gradient_checkpointing: bool,
+    pub checkpoint_every_n_layers: usize,
 }
 
 impl ModelConfig {

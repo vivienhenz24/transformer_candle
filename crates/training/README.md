@@ -93,6 +93,15 @@ checkpoints can be maintained independently using the evaluation configuration.
 * `runs/train/events.out.tfevents.*`: TensorBoard event files containing
   smoothed training metrics and evaluation summaries.
 
+### Publishing & Retrieving Checkpoints
+
+Long-lived checkpoints should be pushed to the Hugging Face Hub instead of
+tracking multi-gigabyte files in git. This project publishes artifacts under
+[`vivienhenz/sconce`](https://huggingface.co/vivienhenz/sconce); use
+`huggingface-cli upload` from the pod to back up new runs and
+`huggingface-cli download vivienhenz/sconce --local-dir ./runs/pretrained`
+to restore them locally.
+
 ## Metrics & Evaluation
 
 Training logs include running loss, throughput, gradient norms, and learning
