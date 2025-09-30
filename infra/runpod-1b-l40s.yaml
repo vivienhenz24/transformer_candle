@@ -95,3 +95,4 @@ command:
       maybe_shard
       run_pipeline
       launch_training
+
