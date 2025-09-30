@@ -155,40 +155,9 @@ impl TokenEmbedding {
             return Ok(());
         }
 
-        // Debug: Print tensor info
-        println!("DEBUG: Token tensor shape: {:?}, dtype: {:?}", flat_ids.shape(), flat_ids.dtype());
-        
         let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
-        let max_id_debug = flat_ids.max_all()?.to_scalar::<i64>()?;
-        println!("DEBUG: min_all() = {}, max_all() = {}", min_id, max_id_debug);
         
         if min_id < 0 {
-            // Debug: Print first few values and find negative ones
-            if flat_ids.elem_count() > 0 {
-                let first_10 = flat_ids.flatten_all()?.narrow(0, 0, (flat_ids.elem_count().min(10) as usize))?;
-                println!("DEBUG: First 10 token values: {:?}", first_10.to_vec1::<i64>());
-                
-                // Find and print negative values
-                let all_values = flat_ids.flatten_all()?.to_vec1::<i64>()?;
-                println!("DEBUG: Total elements: {}", all_values.len());
-                
-                // Check for extreme values that might indicate corruption
-                let mut negative_count = 0;
-                let mut extreme_count = 0;
-                for (i, &val) in all_values.iter().enumerate() {
-                    if val < 0 {
-                        println!("DEBUG: Negative token at index {}: {}", i, val);
-                        negative_count += 1;
-                    }
-                    if val.abs() > 1000000 {  // Suspiciously large values
-                        println!("DEBUG: Extreme token at index {}: {}", i, val);
-                        extreme_count += 1;
-                    }
-                    if negative_count >= 5 && extreme_count >= 5 {
-                        break;
-                    }
-                }
-            }
             return Err(Error::Msg(format!(
                 "encountered negative token id {} (minimum)",
                 min_id

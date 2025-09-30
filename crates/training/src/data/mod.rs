@@ -299,31 +299,14 @@ impl StreamingTextDataLoader {
             }
         }
 
-        // Debug: Check for negative tokens before conversion
-        for (i, &token) in tokens.iter().enumerate() {
-            if token > 50000 {  // Suspiciously large token ID
-                println!("DEBUG: Large token ID at index {}: {}", i, token);
-            }
-        }
-        
         // Convert u32 tokens to i64 to avoid negative token ID issues
         let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
-        
-        // Debug: Check the i64 conversion and print some stats
-        let min_token = tokens_i64.iter().min().copied().unwrap_or(0);
-        let max_token = tokens_i64.iter().max().copied().unwrap_or(0);
-        println!("DEBUG: Data loader - tokens_i64 range: {} to {} (count: {})", min_token, max_token, tokens_i64.len());
         
         let batch_tokens =
             Tensor::from_slice(&tokens_i64, (self.micro_batch_size, target_len), &self.device)
                 .map_err(|err| {
                     TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
                 })?;
-                
-        // Debug: Check the tensor after creation
-        let tensor_min = batch_tokens.min_all().map_err(|e| TrainingError::runtime(format!("min_all failed: {}", e)))?.to_scalar::<i64>().map_err(|e| TrainingError::runtime(format!("to_scalar failed: {}", e)))?;
-        let tensor_max = batch_tokens.max_all().map_err(|e| TrainingError::runtime(format!("max_all failed: {}", e)))?.to_scalar::<i64>().map_err(|e| TrainingError::runtime(format!("to_scalar failed: {}", e)))?;
-        println!("DEBUG: Data loader - tensor range after creation: {} to {}", tensor_min, tensor_max);
 
         let batch_mask =
             Tensor::from_slice(&mask, (self.micro_batch_size, target_len), &self.device).map_err(
