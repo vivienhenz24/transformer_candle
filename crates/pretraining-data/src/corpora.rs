@@ -4,6 +4,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 
+/// Trait for corpus types that can stream text data
+pub trait TextCorpus {
+    type Stream: Iterator<Item = io::Result<String>>;
+    fn stream(&self) -> io::Result<Self::Stream>;
+}
+
 /// Streaming helper for sharded text corpora.
 ///
 /// The iterator yields trimmed UTF-8 lines from each shard in order.
@@ -29,13 +35,17 @@ impl StreamingCorpus {
         Ok(Self { shards })
     }
 
-    pub fn stream(&self) -> io::Result<CorpusStream> {
-        println!("[pretraining-data crate] StreamingCorpus::stream creating iterator");
-        CorpusStream::new(self.shards.clone())
-    }
-
     pub fn shard_paths(&self) -> &[PathBuf] {
         &self.shards
+    }
+}
+
+impl TextCorpus for StreamingCorpus {
+    type Stream = CorpusStream;
+
+    fn stream(&self) -> io::Result<Self::Stream> {
+        println!("[pretraining-data crate] StreamingCorpus::stream creating iterator");
+        CorpusStream::new(self.shards.clone())
     }
 }
 
@@ -138,8 +148,12 @@ impl HuggingFaceStreamingCorpus {
             max_samples,
         })
     }
+}
 
-    pub fn stream(&self) -> io::Result<HFCorpusStream> {
+impl TextCorpus for HuggingFaceStreamingCorpus {
+    type Stream = HFCorpusStream;
+
+    fn stream(&self) -> io::Result<Self::Stream> {
         println!("[pretraining-data crate] HuggingFaceStreamingCorpus::stream creating iterator");
         HFCorpusStream::new(
             self.dataset_name.clone(),
