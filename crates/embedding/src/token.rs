@@ -171,14 +171,21 @@ impl TokenEmbedding {
                 // Find and print negative values
                 let all_values = flat_ids.flatten_all()?.to_vec1::<i64>()?;
                 println!("DEBUG: Total elements: {}", all_values.len());
+                
+                // Check for extreme values that might indicate corruption
                 let mut negative_count = 0;
+                let mut extreme_count = 0;
                 for (i, &val) in all_values.iter().enumerate() {
                     if val < 0 {
                         println!("DEBUG: Negative token at index {}: {}", i, val);
                         negative_count += 1;
-                        if negative_count >= 5 { // Limit output
-                            break;
-                        }
+                    }
+                    if val.abs() > 1000000 {  // Suspiciously large values
+                        println!("DEBUG: Extreme token at index {}: {}", i, val);
+                        extreme_count += 1;
+                    }
+                    if negative_count >= 5 && extreme_count >= 5 {
+                        break;
                     }
                 }
             }
