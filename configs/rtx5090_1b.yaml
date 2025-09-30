@@ -1,0 +1,80 @@
+# RTX 5090 32GB optimized 1B parameter training profile
+# Optimized for 32GB VRAM with reduced batch size and memory-efficient settings
+
+model:
+  hidden_size: 2048          # Same: 1B param count
+  intermediate_size: 8192    # Same: 4x hidden_size
+  num_layers: 20             # Same: 1B param count
+  num_attention_heads: 32    # Same
+  num_key_value_heads: 32    # Same (use 8 for GQA to save memory if needed)
+  max_position_embeddings: 2048  # Same: standard context length
+  attn_dropout: null
+  residual_dropout: 0.0
+  rope_mode: null
+  rope_theta: null
+
+tokenizer:
+  tokenizer_json: "/workspace/artifacts/tokenizer/rtx5090-1b/tokenizer.json"
+  vocab: "/workspace/artifacts/tokenizer/rtx5090-1b/vocab.json"
+  merges: "/workspace/artifacts/tokenizer/rtx5090-1b/merges.txt"
+  special_tokens: "/workspace/runs/rtx5090-1b/special_tokens.txt"
+
+data:
+  train_shards: []  # Empty for streaming mode
+  validation_shards: []  # Empty for streaming mode
+  sequence_length: 2048
+  batch_size: 1              # REDUCED: 1 instead of 2 (32GB constraint)
+  gradient_accumulation_steps: 64  # DOUBLED: 64 to maintain same effective batch (64 samples)
+  shuffle_buffer_size: 32768  # REDUCED: Less memory for buffer
+  num_workers: 6             # REDUCED: Fewer workers to save memory
+  cache_dir: "/workspace/cache/rtx5090-1b"
+
+optimizer:
+  algorithm: adam_w
+  learning_rate: 1.8e-4      # Same: learning rate
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  epsilon: 1.0e-8
+
+scheduler:
+  strategy: cosine_with_warmup
+  warmup_steps: 3000
+  total_steps: 300000
+  total_epochs: null
+  min_lr: 1.8e-5
+  max_lr: null
+
+runtime:
+  seed: 42
+  precision: bf16            # BF16 for memory efficiency (RTX 5090 supports this)
+  log_every_n_steps: 50
+  checkpoint:
+    directory: "/workspace/runs/rtx5090-1b/checkpoints"
+    every_n_steps: 1500
+    every_n_epochs: null
+    max_keep: 5              # REDUCED: Keep fewer checkpoints to save disk
+  evaluation:
+    every_n_steps: 4500
+    every_n_epochs: null
+    max_batches: 16          # REDUCED: Fewer eval batches
+    best:
+      directory: "/workspace/runs/rtx5090-1b/best"
+      max_keep: 2
+  logging:
+    enable_stdout: true
+    tensorboard: "/workspace/runs/rtx5090-1b/tensorboard"
+    tensorboard_flush_every_n: 100
+
+# Memory Usage Estimate (RTX 5090 32GB):
+# - Model parameters: ~4-5 GB (1B params in BF16)
+# - Optimizer states: ~8-10 GB (AdamW has 2 states per param)
+# - Gradients: ~4-5 GB
+# - Activations (batch=1, seq=2048): ~8-10 GB
+# - Training overhead: ~2-3 GB
+# Total: ~26-33 GB (tight but should fit!)
+#
+# If OOM occurs:
+# 1. Reduce sequence_length to 1024
+# 2. Use GQA: set num_key_value_heads: 8 (saves ~1-2GB)
+# 3. Enable gradient checkpointing (if implemented)
