@@ -125,82 +125,66 @@ download_dataset() {
 
     log "Downloading dataset $dataset_id -> $dataset_dir"
 
-    if command -v hf_transfer >/dev/null 2>&1; then
-        if [[ "$parquet_limit" -gt 0 ]]; then
-            local patterns
-            patterns=$(DATASET_ID="$dataset_id" PARQUET_LIMIT="$parquet_limit" python3 - <<'PY'
+    DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" PARQUET_LIMIT="$parquet_limit" \
+    python3 - <<'PY'
 import os
-from huggingface_hub import HfApi
+from pathlib import Path
+from huggingface_hub import HfApi, hf_hub_url, snapshot_download
+
+try:
+    import hf_transfer
+except ImportError:
+    hf_transfer = None
 
 dataset_id = os.environ['DATASET_ID']
-limit = int(os.environ['PARQUET_LIMIT'])
-api = HfApi()
-files = [
-    file
-    for file in api.list_repo_files(dataset_id, repo_type="dataset")
-    if file.startswith("data/") and file.endswith(".parquet")
-]
-files.sort()
-selected = files[:limit]
-if not selected:
-    raise SystemExit("No parquet files found in dataset")
-print("\n".join(selected))
-PY
-)
-            IFS=$'\n' read -r -d '' -a pattern_array <<<"${patterns}$'\n'"
-            for pattern in "${pattern_array[@]}"; do
-                [[ -z "$pattern" ]] && continue
-                hf_transfer download \
-                    --repo-type dataset \
-                    "$dataset_id" \
-                    --patterns "$pattern" \
-                    --local-dir "$dataset_dir" \
-                    --max-concurrent-downloads "$max_workers"
-            done
-        else
-            hf_transfer download \
-                --repo-type dataset \
-                "$dataset_id" \
-                --patterns 'data/*.parquet' \
-                --local-dir "$dataset_dir" \
-                --max-concurrent-downloads "$max_workers"
-        fi
-    else
-        DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" PARQUET_LIMIT="$parquet_limit" \
-        python3 - <<'PY'
-import os
-from huggingface_hub import HfApi, snapshot_download
-
-dataset_id = os.environ['DATASET_ID']
-local_dir = os.environ['DATASET_DIR']
+local_dir = Path(os.environ['DATASET_DIR'])
 max_workers = int(os.environ['HF_WORKERS'])
 parquet_limit = int(os.environ.get('PARQUET_LIMIT', '0'))
 
-allow_patterns = ["data/*.parquet"]
-
+api = HfApi()
+files = [
+    file
+    for file in api.list_repo_files(dataset_id, repo_type='dataset')
+    if file.startswith('data/') and file.endswith('.parquet')
+]
+files.sort()
 if parquet_limit > 0:
-    api = HfApi()
-    files = [
-        file
-        for file in api.list_repo_files(dataset_id, repo_type="dataset")
-        if file.startswith("data/") and file.endswith(".parquet")
-    ]
-    files.sort()
-    allow_patterns = files[:parquet_limit]
-    if not allow_patterns:
-        raise SystemExit("No parquet files found in dataset")
+    files = files[:parquet_limit]
+if not files:
+    raise SystemExit('No parquet files found in dataset')
 
-snapshot_download(
-    repo_id=dataset_id,
-    repo_type="dataset",
-    local_dir=local_dir,
-    local_dir_use_symlinks=False,
-    allow_patterns=allow_patterns,
-    max_workers=max_workers,
-    resume_download=True,
-)
+local_dir.mkdir(parents=True, exist_ok=True)
+
+if hf_transfer is not None:
+    chunk_size = 32 * 1024 * 1024
+    for idx, filename in enumerate(files, 1):
+        url = hf_hub_url(dataset_id, filename, repo_type='dataset')
+        dest_path = local_dir / filename
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = dest_path.with_suffix(dest_path.suffix + '.tmp')
+        if dest_path.exists():
+            print(f"[{idx}/{len(files)}] Skipping existing {dest_path}")
+            continue
+        print(f"[{idx}/{len(files)}] hf_transfer downloading {filename}")
+        hf_transfer.download(
+            url,
+            str(tmp_path),
+            max_files=max(4, min(max_workers, 64)),
+            chunk_size=chunk_size,
+        )
+        tmp_path.replace(dest_path)
+else:
+    allow_patterns = files
+    snapshot_download(
+        repo_id=dataset_id,
+        repo_type='dataset',
+        local_dir=str(local_dir),
+        local_dir_use_symlinks=False,
+        allow_patterns=allow_patterns,
+        max_workers=max_workers,
+        resume_download=True,
+    )
 PY
-    fi
 }
 
 convert_parquet_to_shards() {
@@ -222,7 +206,7 @@ LINES_PER_SHARD = int(os.environ['LINES_PER_SHARD'])
 TARGET_SHARDS = int(os.environ.get('TARGET_SHARDS', '0'))
 
 SHARDS_DIR.mkdir(parents=True, exist_ok=True)
-paths = sorted(DATASET_DIR.glob('data/*.parquet'))
+paths = sorted(DATASET_DIR.glob('data/**/*.parquet'))
 if not paths:
     raise SystemExit(f"no parquet files found under {DATASET_DIR}")
 
