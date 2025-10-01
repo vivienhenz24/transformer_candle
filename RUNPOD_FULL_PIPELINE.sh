@@ -332,7 +332,7 @@ config = {
             'directory': str(run_root / 'checkpoints'),
             'every_n_steps': 5000,
             'every_n_epochs': None,
-            'max_keep': 3,
+            'max_keep': 2,
         },
         'evaluation': {
             'every_n_steps': 5000,
@@ -359,9 +359,8 @@ PY
 
     cat >"$run_root/special_tokens.txt" <<'JSON'
 [
-  "<pad>",
-  "<bos>",
-  "<eos>"
+  "<|endoftext|>",
+  "<|pad|>"
 ]
 JSON
 
