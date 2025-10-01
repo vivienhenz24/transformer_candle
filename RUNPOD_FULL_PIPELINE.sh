@@ -326,7 +326,7 @@ config = {
     },
     'runtime': {
         'seed': 42,
-        'precision': 'bf16',
+        'precision': 'fp32',
         'log_every_n_steps': 50,
         'checkpoint': {
             'directory': str(run_root / 'checkpoints'),
