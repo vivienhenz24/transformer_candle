@@ -1,10 +1,13 @@
 use std::{
+    io::{self, BufWriter, Write},
     path::PathBuf,
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{self, SyncSender},
         Arc,
     },
+    thread,
 };
 
 use clap::Parser;
@@ -312,50 +315,77 @@ fn run_streaming_training(
     )
     .map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
 
-    // Writing shards
-    let stream = corpus
+    let (job_tx, job_rx) = mpsc::sync_channel::<ShardJob>(4);
+    let written_shards = Arc::new(AtomicUsize::new(0));
+    let writer_progress = Arc::clone(&written_shards);
+    let writer_handle = thread::spawn(move || -> Result<Vec<(usize, PathBuf)>, TrainingError> {
+        let mut paths = Vec::new();
+        while let Ok(job) = job_rx.recv() {
+            write_shard(&job.path, &job.lines).map_err(|e| {
+                TrainingError::runtime(format!("failed to write shard {:04}: {}", job.index, e))
+            })?;
+            writer_progress.fetch_add(1, Ordering::Relaxed);
+            println!(
+                "📝 Shard {:04} written ({} lines) -> {}",
+                job.index,
+                job.lines.len(),
+                job.path.display()
+            );
+            paths.push((job.index, job.path));
+        }
+        Ok(paths)
+    });
+
+    let mut stream = corpus
         .stream()
         .map_err(|e| TrainingError::runtime(format!("Failed to start stream: {}", e)))?;
 
-    let mut shard_paths = Vec::new();
-    let mut current_shard = 0;
     let lines_per_shard = 100_000;
-    let mut current_file = None;
-    let mut line_count = 0;
+    let mut shard_index = 0usize;
+    let mut total_samples = 0usize;
+    let mut buffer: Vec<String> = Vec::with_capacity(lines_per_shard);
 
-    for (idx, result) in stream.enumerate() {
+    while let Some(result) = stream.next() {
         let text = result.map_err(|e| TrainingError::runtime(format!("Stream error: {}", e)))?;
+        if text.is_empty() {
+            continue;
+        }
+        buffer.push(text);
+        total_samples += 1;
 
-        // Open new shard if needed
-        if line_count % lines_per_shard == 0 {
-            if let Some(file) = current_file.take() {
-                drop(file);
-            }
-            let shard_path = temp_dir.join(format!("shard_{:04}.txt", current_shard));
-            // Creating shard
-            shard_paths.push(shard_path.clone());
-            current_file = Some(std::fs::File::create(&shard_path)?);
-            current_shard += 1;
+        if total_samples % 100_000 == 0 {
+            let written = written_shards.load(Ordering::Relaxed);
+            println!(
+                "🚚 Buffered {} samples (queued shards: {} | flushed shards: {})",
+                total_samples, shard_index, written
+            );
         }
 
-        if let Some(ref mut file) = current_file {
-            use std::io::Write;
-            writeln!(file, "{}", text)?;
-        }
-
-        line_count += 1;
-
-        if idx % 10000 == 0 && idx > 0 {
-            if idx % 1_000_000 == 0 && idx > 0 {
-                println!("  Streamed {} samples...", idx);
-            }
+        if buffer.len() >= lines_per_shard {
+            enqueue_shard(shard_index, &temp_dir, std::mem::take(&mut buffer), &job_tx)?;
+            shard_index += 1;
         }
     }
 
+    if !buffer.is_empty() {
+        enqueue_shard(shard_index, &temp_dir, buffer, &job_tx)?;
+        shard_index += 1;
+    }
+
+    drop(job_tx);
+
+    let mut shard_paths = writer_handle
+        .join()
+        .map_err(|_| TrainingError::runtime("shard writer thread panicked"))??;
+
+    shard_paths.sort_by_key(|(idx, _)| *idx);
+    let shard_paths: Vec<PathBuf> = shard_paths.into_iter().map(|(_, path)| path).collect();
+
     println!(
-        "✅ Streamed {} samples into {} shards",
-        line_count,
-        shard_paths.len()
+        "✅ Streamed {} samples into {} shards ({} written)",
+        total_samples,
+        shard_paths.len(),
+        written_shards.load(Ordering::Relaxed)
     );
 
     // Update config to use temporary shards
@@ -381,4 +411,33 @@ fn run_streaming_training(
     let _ = fs::remove_dir_all(&temp_dir);
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct ShardJob {
+    index: usize,
+    path: PathBuf,
+    lines: Vec<String>,
+}
+
+fn enqueue_shard(
+    index: usize,
+    temp_dir: &std::path::Path,
+    lines: Vec<String>,
+    tx: &SyncSender<ShardJob>,
+) -> Result<(), TrainingError> {
+    let path = temp_dir.join(format!("shard_{:04}.txt", index));
+    let job = ShardJob { index, path, lines };
+    tx.send(job).map_err(|err| {
+        TrainingError::runtime(format!("failed to queue shard {:04}: {}", index, err))
+    })
+}
+
+fn write_shard(path: &PathBuf, lines: &[String]) -> io::Result<()> {
+    let file = std::fs::File::create(path)?;
+    let mut writer = BufWriter::new(file);
+    for line in lines {
+        writeln!(writer, "{}", line)?;
+    }
+    writer.flush()
 }
