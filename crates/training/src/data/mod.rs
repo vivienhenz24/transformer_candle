@@ -346,24 +346,27 @@ impl StreamingTextDataLoader {
         // Convert u32 tokens to i64 to avoid negative token ID issues
         let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
 
+        let cpu_device = Device::Cpu;
+
         let batch_tokens = Tensor::from_slice(
             &tokens_i64,
             (self.micro_batch_size, target_len),
-            &self.device,
+            &cpu_device,
         )
+        .and_then(|t| t.to_device(&self.device))
         .map_err(|err| {
             TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
         })?;
 
         let batch_mask =
-            Tensor::from_slice(&mask, (self.micro_batch_size, target_len), &self.device).map_err(
-                |err| {
+            Tensor::from_slice(&mask, (self.micro_batch_size, target_len), &cpu_device)
+                .and_then(|t| t.to_device(&self.device))
+                .map_err(|err| {
                     TrainingError::runtime(format!(
                         "failed to materialize attention mask tensor: {}",
                         err
                     ))
-                },
-            )?;
+                })?;
 
         let micro_batch_index = self.micro_batch_index;
         let micro_batches_per_step = self.micro_batches_per_step;
