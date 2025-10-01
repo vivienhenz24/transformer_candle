@@ -41,8 +41,9 @@ main() {
     local split="${DATASET_SPLIT:-train}"
     local vocab_size="${VOCAB_SIZE:-50000}"
     local tokenizer_max_lines="${TOKENIZER_MAX_LINES:-1000000}"
-    local stream_batch_size="${STREAM_BATCH_SIZE:-4000}"
+    local stream_batch_size="${STREAM_BATCH_SIZE:-8000}"
     local stream_max_samples="${STREAM_MAX_SAMPLES:-8500000}"
+    local skip_tokenizer="${SKIP_TOKENIZER:-0}"
     local cache_root="/workspace/cache/$run_name"
     local hf_cache_root="/workspace/hf_cache"
     local placeholder_shard="/workspace/tmp_streaming_shards/.placeholder"
@@ -63,6 +64,7 @@ main() {
     export HF_HOME="$hf_cache_root"
     export HF_DATASETS_CACHE="${hf_cache_root}/datasets"
     export HF_HUB_CACHE="${hf_cache_root}/hub"
+    export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}
 
     if [[ -z "${HF_TOKEN:-}" && -z "${HUGGINGFACEHUB_API_TOKEN:-}" ]]; then
         log "HF_TOKEN is not set. Public datasets only; set HF_TOKEN for gated corpora."
@@ -113,7 +115,7 @@ install_python_packages() {
     log "Installing Python dependencies"
     python3 -m pip install --upgrade pip
     python3 -m pip install --upgrade \
-        datasets==3.0.0 huggingface-hub tokenizers tqdm
+        datasets==3.0.0 huggingface-hub tokenizers tqdm hf_transfer
 }
 
 configure_cuda_env() {
@@ -174,6 +176,10 @@ train_or_reuse_tokenizer() {
 
     if [[ -n "$stream_max_samples" && "$stream_max_samples" != "0" ]]; then
         cmd+=(--max-samples "$stream_max_samples")
+    fi
+
+    if [[ "$skip_tokenizer" == "1" ]]; then
+        cmd+=(--skip-tokenizer)
     fi
 
     "${cmd[@]}"
@@ -239,7 +245,7 @@ optimizer:
   max_grad_norm: 1.0
 
 scheduler:
-  strategy: cosine-with-warmup
+  strategy: cosine_with_warmup
   warmup_steps: 2000
   total_steps: 500000
   total_epochs: null

@@ -313,7 +313,7 @@ fn run_streaming_training(
     .map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
 
     // Writing shards
-    let mut stream = corpus
+    let stream = corpus
         .stream()
         .map_err(|e| TrainingError::runtime(format!("Failed to start stream: {}", e)))?;
 
