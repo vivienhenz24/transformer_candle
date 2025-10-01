@@ -245,7 +245,7 @@ optimizer:
   max_grad_norm: 1.0
 
 scheduler:
-  strategy: cosine-with-warmup
+  strategy: cosine_with_warmup
   warmup_steps: 2000
   total_steps: 500000
   total_epochs: null
