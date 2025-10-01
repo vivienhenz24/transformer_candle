@@ -364,6 +364,11 @@ PY
   "<eos>"
 ]
 JSON
+
+    if [[ -f "$run_root/streaming_config.json" ]]; then
+        rm -f "$run_root/streaming_config.json"
+        log "Removed legacy streaming_config.json from $run_root"
+    fi
 }
 
 build_training_binary() {
