@@ -177,25 +177,25 @@ impl StreamingTextDataLoader {
             println!("📚 Initializing data stream...");
             self.active_stream = Some(Box::new(self.corpus.stream()?));
         }
-        
+
         let buffer_target = self.shuffle_buffer_size.max(self.micro_batch_size).max(1);
-        
+
         // Collect lines from stream
         let mut temp_buffer = Vec::new();
         let mut stream_exhausted = false;
         let mut lines_loaded = 0;
-        
+
         while lines_loaded < buffer_target && self.document_queue.len() < buffer_target {
             // Take stream temporarily to avoid borrow conflicts
             let mut stream = self.active_stream.take().unwrap();
-            
+
             match stream.next() {
                 Some(Ok(line)) => {
                     self.active_stream = Some(stream);
                     if !line.is_empty() {
                         temp_buffer.push(line);
                         lines_loaded += 1;
-                        
+
                         // Flush when buffer is full
                         if temp_buffer.len() >= buffer_target {
                             temp_buffer.shuffle(&mut self.stream_rng);
@@ -213,13 +213,13 @@ impl StreamingTextDataLoader {
                 }
             }
         }
-        
+
         // Flush any remaining lines
         if !temp_buffer.is_empty() {
             temp_buffer.shuffle(&mut self.stream_rng);
             self.tokenize_and_queue(temp_buffer)?;
         }
-        
+
         // Handle stream exhaustion
         if stream_exhausted {
             if self.document_queue.is_empty() {
@@ -229,9 +229,13 @@ impl StreamingTextDataLoader {
             self.active_stream = None;
             self.current_epoch += 1;
             self.prepared_epoch = self.current_epoch + 1;
-            println!("✅ Epoch {} complete, starting epoch {}", self.current_epoch - 1, self.current_epoch);
+            println!(
+                "✅ Epoch {} complete, starting epoch {}",
+                self.current_epoch - 1,
+                self.current_epoch
+            );
         }
-        
+
         Ok(!self.document_queue.is_empty())
     }
 
@@ -239,32 +243,30 @@ impl StreamingTextDataLoader {
         // Parallel tokenization for speed
         let tokenizer = self.tokenizer.clone();
         let separator_token = self.separator_token_id;
-        
+
         let tokenized: Vec<Vec<u32>> = buffer
             .par_iter()
-            .filter_map(|text| {
-                match tokenizer.encode(text.as_str(), true) {
-                    Ok(encoding) => {
-                        let mut ids = encoding.get_ids().to_vec();
-                        if let Some(token) = separator_token {
-                            ids.push(token);
-                        }
-                        if !ids.is_empty() {
-                            Some(ids)
-                        } else {
-                            None
-                        }
+            .filter_map(|text| match tokenizer.encode(text.as_str(), true) {
+                Ok(encoding) => {
+                    let mut ids = encoding.get_ids().to_vec();
+                    if let Some(token) = separator_token {
+                        ids.push(token);
                     }
-                    Err(_) => None,
+                    if !ids.is_empty() {
+                        Some(ids)
+                    } else {
+                        None
+                    }
                 }
+                Err(_) => None,
             })
             .collect();
-        
+
         // Add to queue
         for ids in tokenized {
             self.document_queue.push_back(ids);
         }
-        
+
         Ok(())
     }
 
@@ -343,12 +345,15 @@ impl StreamingTextDataLoader {
 
         // Convert u32 tokens to i64 to avoid negative token ID issues
         let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
-        
-        let batch_tokens =
-            Tensor::from_slice(&tokens_i64, (self.micro_batch_size, target_len), &self.device)
-                .map_err(|err| {
-                    TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
-                })?;
+
+        let batch_tokens = Tensor::from_slice(
+            &tokens_i64,
+            (self.micro_batch_size, target_len),
+            &self.device,
+        )
+        .map_err(|err| {
+            TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
+        })?;
 
         let batch_mask =
             Tensor::from_slice(&mask, (self.micro_batch_size, target_len), &self.device).map_err(

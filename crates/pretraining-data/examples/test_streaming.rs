@@ -1,4 +1,4 @@
-use pretraining_data::HuggingFaceStreamingCorpus;
+use pretraining_data::{HuggingFaceStreamingCorpus, TextCorpus};
 use std::io;
 
 fn main() -> io::Result<()> {
@@ -9,14 +9,14 @@ fn main() -> io::Result<()> {
     let corpus = HuggingFaceStreamingCorpus::new(
         "HuggingFaceFW/fineweb".to_string(),
         "train".to_string(),
-        100,  // Fetch 100 samples per batch
-        Some(1000),  // Limit to 1000 samples total for testing
+        100,        // Fetch 100 samples per batch
+        Some(1000), // Limit to 1000 samples total for testing
     )?;
 
     println!("Created corpus, starting stream...\n");
 
     // Create iterator
-    let mut stream = corpus.stream()?;
+    let stream = corpus.stream()?;
 
     let mut count = 0;
     let mut total_chars = 0;

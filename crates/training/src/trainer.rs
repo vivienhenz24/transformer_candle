@@ -549,23 +549,22 @@ impl Trainer {
                 sum_squares += sq;
             }
         }
-        
+
         let total_norm = sum_squares.sqrt();
-        
+
         // Only clip if norm exceeds max_norm
         if total_norm > max_norm {
             let clip_coef = max_norm / (total_norm + 1e-6);
-            
+
             // Scale all gradients by clip_coef
             for tensor in &self.parameter_tensors {
                 if let Some(grad) = grads.remove(tensor) {
-                    let clipped = (grad * clip_coef)
-                        .map_err(to_runtime_error)?;
+                    let clipped = (grad * clip_coef).map_err(to_runtime_error)?;
                     grads.insert(tensor, clipped);
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -880,7 +879,8 @@ impl Trainer {
 
             // Convert u32 to i64 to avoid negative token ID issues
             let context_i64: Vec<i64> = context.iter().map(|&t| t as i64).collect();
-            let input = match Tensor::from_slice(&context_i64, (1, context_i64.len()), &self.device) {
+            let input = match Tensor::from_slice(&context_i64, (1, context_i64.len()), &self.device)
+            {
                 Ok(t) => t,
                 Err(_) => break,
             };

@@ -140,9 +140,8 @@ runtime:
 Create special_tokens.txt:
 
 ```bash
-cat > /workspace/runs/runpod-1b-streaming/special_tokens.txt <<EOF
-<|endoftext|>
-<|pad|>
+cat > /workspace/runs/runpod-1b-streaming/special_tokens.txt <<'EOF'
+["<|endoftext|>", "<|pad|>"]
 EOF
 ```
 

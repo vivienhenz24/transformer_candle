@@ -20,11 +20,11 @@ tokenizer:
   special_tokens: "/workspace/runs/rtx5090-1b/tokenizer/special_tokens.txt"
 
 data:
-  train_shards: []  # Empty for streaming mode
-  validation_shards: []  # Empty for streaming mode
-  sequence_length: 1024      # INCREASED: More tokens per step
-  batch_size: 4              # REDUCED: To fit seq_len=1024
-  gradient_accumulation_steps: 16  # INCREASED: Effective batch = 64
+  train_shards: []  # Empty for streaming + temp shard workflow
+  validation_shards: []
+  sequence_length: 1024          # 1K context length
+  batch_size: 64                 # Global batch (micro=4 with grad_accum=16)
+  gradient_accumulation_steps: 16
   shuffle_buffer_size: 32768
   num_workers: 6
   cache_dir: "/workspace/cache/rtx5090-550m"
@@ -80,12 +80,12 @@ runtime:
 # - Model parameters: ~2.2 GB (550M params in BF16)
 # - Optimizer states: ~4.4 GB (AdamW)
 # - Gradients: ~2.2 GB
-# - Activations (batch=4, seq=1024): ~6-8 GB
+# - Activations (micro_batch=4, seq=1024): ~6-8 GB
 # - Training overhead: ~2 GB
 # Total: ~17-19 GB (60% of 32GB - SAFE!)
 #
 # Training Tokens:
-# - Per step: 4 * 16 * 1024 = 65,536 tokens (~65K)
+# - Per step: 64 * 1024 = 65,536 tokens (~65K)
 # - Total: 500K steps * 65K = 32.8 BILLION tokens
 # - Chinchilla optimal for 550M: ~11-14B tokens
 # - This config: 32.8B tokens (MORE than optimal - excellent!)
@@ -96,4 +96,3 @@ runtime:
 # - Step 10000: loss ~2.5-3.0
 # - Step 50000: loss ~1.8-2.2
 # - Step 100000+: loss ~1.4-1.8 (final)
-
