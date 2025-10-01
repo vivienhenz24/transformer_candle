@@ -40,13 +40,13 @@ main() {
     local dataset_dir="${DATASET_DIR:-/workspace/datasets/fineweb}"
     local shards_dir="${SHARDS_DIR:-/workspace/tmp_streaming_shards}"
     local lines_per_shard="${LINES_PER_SHARD:-100000}"
-    local hf_workers="${HF_MAX_WORKERS:-8}"
-    local parquet_limit="${HF_PARQUET_LIMIT:-0}"
+    local hf_workers="${HF_MAX_WORKERS:-32}"
+    local parquet_limit="${HF_PARQUET_LIMIT:-20}"
     local vocab_size="${VOCAB_SIZE:-50000}"
     local tokenizer_max_lines="${TOKENIZER_MAX_LINES:-1000000}"
     local skip_download="${SKIP_DOWNLOAD:-0}"
     local skip_shard_convert="${SKIP_SHARD_CONVERT:-0}"
-    local target_shards="${TARGET_SHARDS:-0}"
+    local target_shards="${TARGET_SHARDS:-85}"
 
     log "Run directory: $run_root"
     log "Dataset cache: $dataset_dir"
@@ -124,28 +124,61 @@ download_dataset() {
     local parquet_limit="$4"
 
     log "Downloading dataset $dataset_id -> $dataset_dir"
-    DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" PARQUET_LIMIT="$parquet_limit" \
-    python3 - <<'PY'
+
+    if command -v hf_transfer >/dev/null 2>&1; then
+        if [[ "$parquet_limit" -gt 0 ]]; then
+            local patterns
+            patterns=$(DATASET_ID="$dataset_id" PARQUET_LIMIT="$parquet_limit" python3 - <<'PY'
 import os
-from pathlib import Path
-from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+from huggingface_hub import HfApi
+
+dataset_id = os.environ['DATASET_ID']
+limit = int(os.environ['PARQUET_LIMIT'])
+api = HfApi()
+files = [
+    file
+    for file in api.list_repo_files(dataset_id, repo_type="dataset")
+    if file.startswith("data/") and file.endswith(".parquet")
+]
+files.sort()
+selected = files[:limit]
+if not selected:
+    raise SystemExit("No parquet files found in dataset")
+print("\n".join(selected))
+PY
+)
+            IFS=$'\n' read -r -d '' -a pattern_array <<<"${patterns}$'\n'"
+            for pattern in "${pattern_array[@]}"; do
+                [[ -z "$pattern" ]] && continue
+                hf_transfer download \
+                    --repo-type dataset \
+                    "$dataset_id" \
+                    --patterns "$pattern" \
+                    --local-dir "$dataset_dir" \
+                    --max-concurrent-downloads "$max_workers"
+            done
+        else
+            hf_transfer download \
+                --repo-type dataset \
+                "$dataset_id" \
+                --patterns 'data/*.parquet' \
+                --local-dir "$dataset_dir" \
+                --max-concurrent-downloads "$max_workers"
+        fi
+    else
+        DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" PARQUET_LIMIT="$parquet_limit" \
+        python3 - <<'PY'
+import os
+from huggingface_hub import HfApi, snapshot_download
 
 dataset_id = os.environ['DATASET_ID']
 local_dir = os.environ['DATASET_DIR']
 max_workers = int(os.environ['HF_WORKERS'])
 parquet_limit = int(os.environ.get('PARQUET_LIMIT', '0'))
 
-if parquet_limit <= 0:
-    snapshot_download(
-        repo_id=dataset_id,
-        repo_type="dataset",
-        local_dir=local_dir,
-        local_dir_use_symlinks=False,
-        allow_patterns=["data/*.parquet"],
-        max_workers=max_workers,
-        resume_download=True,
-    )
-else:
+allow_patterns = ["data/*.parquet"]
+
+if parquet_limit > 0:
     api = HfApi()
     files = [
         file
@@ -153,21 +186,21 @@ else:
         if file.startswith("data/") and file.endswith(".parquet")
     ]
     files.sort()
-    selected = files[:parquet_limit]
-    if not selected:
+    allow_patterns = files[:parquet_limit]
+    if not allow_patterns:
         raise SystemExit("No parquet files found in dataset")
-    Path(local_dir).mkdir(parents=True, exist_ok=True)
-    for idx, filename in enumerate(selected, 1):
-        print(f"Downloading {idx}/{len(selected)} -> {filename}")
-        hf_hub_download(
-            repo_id=dataset_id,
-            repo_type="dataset",
-            filename=filename,
-            local_dir=local_dir,
-            local_dir_use_symlinks=False,
-            resume_download=True,
-        )
+
+snapshot_download(
+    repo_id=dataset_id,
+    repo_type="dataset",
+    local_dir=local_dir,
+    local_dir_use_symlinks=False,
+    allow_patterns=allow_patterns,
+    max_workers=max_workers,
+    resume_download=True,
+)
 PY
+    fi
 }
 
 convert_parquet_to_shards() {
