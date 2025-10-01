@@ -479,6 +479,8 @@ pub struct OptimizerConfig {
     pub beta2: f32,
     #[serde(default = "default_adam_eps")]
     pub epsilon: f32,
+    #[serde(default)]
+    pub max_grad_norm: Option<f32>,
 }
 
 impl Default for OptimizerConfig {
@@ -490,6 +492,7 @@ impl Default for OptimizerConfig {
             beta1: default_beta1(),
             beta2: default_beta2(),
             epsilon: default_adam_eps(),
+            max_grad_norm: None,
         }
     }
 }

@@ -68,7 +68,7 @@ impl CorpusStream {
         stream.load_next_batch()?;
         Ok(stream)
     }
-    
+
     fn load_next_batch(&mut self) -> io::Result<()> {
         if self.next_shard >= self.shards.len() {
             return Ok(());
@@ -89,8 +89,8 @@ impl CorpusStream {
         let batch_lines: Vec<String> = batch
             .par_iter()
             .flat_map(|path| {
-                match File::open(path) {
-                    Ok(file) => {
+            match File::open(path) {
+                Ok(file) => {
                         BufReader::new(file)
                             .lines()
                             .filter_map(|line| line.ok())
@@ -328,7 +328,7 @@ if __name__ == "__main__":
             io::Error::new(io::ErrorKind::Other, "No stdout reader available")
         })?;
 
-        let mut line = String::new();
+            let mut line = String::new();
         while reader.read_line(&mut line)? > 0 {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
                 // Check for batch data
