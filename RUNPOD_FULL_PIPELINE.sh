@@ -158,7 +158,7 @@ train_or_reuse_tokenizer() {
         --learning-rate 6e-4
         --weight-decay 0.1
         --warmup-steps 2000
-        --schedule cosine_with_warmup
+        --schedule cosine-with-warmup
         --checkpoint-every 5000
         --max-checkpoints 3
         --evaluate-every 5000

@@ -1459,7 +1459,7 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
 
     println!("Collecting samples for tokenizer training...");
     let mut texts = Vec::new();
-    let mut stream = corpus
+    let stream = corpus
         .stream()
         .map_err(|e| PipelineError::Invalid(format!("Failed to start stream: {}", e)))?;
 
