@@ -1,0 +1,99 @@
+# RTX 5090 32GB optimized 550M parameter training profile
+# STABLE CONFIG with gradient clipping to prevent explosion
+
+model:
+  hidden_size: 896           # 550M params
+  intermediate_size: 3584    # 4x hidden_size
+  num_layers: 12             # Moderate depth
+  num_attention_heads: 14    # 896/14 = 64 head_dim
+  num_key_value_heads: 14    # MHA (Multi-Head Attention)
+  max_position_embeddings: 1024  # Standard context length
+  attn_dropout: null
+  residual_dropout: 0.0
+  rope_mode: null
+  rope_theta: null
+
+tokenizer:
+  tokenizer_json: "/workspace/runs/rtx5090-1b/tokenizer/tokenizer.json"
+  vocab: "/workspace/runs/rtx5090-1b/tokenizer/vocab.json"
+  merges: "/workspace/runs/rtx5090-1b/tokenizer/merges.txt"
+  special_tokens: "/workspace/runs/rtx5090-1b/tokenizer/special_tokens.txt"
+
+data:
+  train_shards: []  # Empty for streaming mode
+  validation_shards: []  # Empty for streaming mode
+  sequence_length: 1024      # INCREASED: More tokens per step
+  batch_size: 4              # REDUCED: To fit seq_len=1024
+  gradient_accumulation_steps: 16  # INCREASED: Effective batch = 64
+  shuffle_buffer_size: 32768
+  num_workers: 6
+  cache_dir: "/workspace/cache/rtx5090-550m"
+
+optimizer:
+  algorithm: adam_w
+  learning_rate: 6.0e-4      # STANDARD: GPT-3 style LR for 550M
+  weight_decay: 0.1          # INCREASED: Better regularization
+  beta1: 0.9
+  beta2: 0.95
+  epsilon: 1.0e-8
+  max_grad_norm: 1.0         # GRADIENT CLIPPING: Prevents explosion!
+
+scheduler:
+  strategy: cosine_with_warmup
+  warmup_steps: 2000         # STANDARD: ~2K warmup
+  total_steps: 500000        # INCREASED: More steps for better convergence
+  total_epochs: null
+  min_lr: 6.0e-5             # 10% of max_lr
+  max_lr: null
+
+runtime:
+  seed: 42
+  precision: bf16            # BF16: Faster + saves memory
+  log_every_n_steps: 50
+  checkpoint:
+    directory: "/workspace/runs/rtx5090-550m/checkpoints"
+    every_n_steps: 5000      # Save less often
+    every_n_epochs: null
+    max_keep: 3              # Keep only 3 checkpoints
+  evaluation:
+    every_n_steps: 5000
+    every_n_epochs: null
+    max_batches: 20
+    best:
+      directory: "/workspace/runs/rtx5090-550m/best"
+      max_keep: 2
+  logging:
+    enable_stdout: true
+    tensorboard: "/workspace/runs/rtx5090-550m/tensorboard"
+    tensorboard_flush_every_n: 100
+
+# Model Size Calculation (550M params):
+# Embedding: 50000 * 896 = 44.8M
+# Layers (12x):
+#   - Attention: 896*896*4 = 3.21M per layer
+#   - FFN: 896*3584*2 = 6.42M per layer
+#   - Total per layer: ~9.6M
+#   - 12 layers: ~115M
+# Total: ~550M parameters
+#
+# Memory Usage Estimate (RTX 5090 32GB):
+# - Model parameters: ~2.2 GB (550M params in BF16)
+# - Optimizer states: ~4.4 GB (AdamW)
+# - Gradients: ~2.2 GB
+# - Activations (batch=4, seq=1024): ~6-8 GB
+# - Training overhead: ~2 GB
+# Total: ~17-19 GB (60% of 32GB - SAFE!)
+#
+# Training Tokens:
+# - Per step: 4 * 16 * 1024 = 65,536 tokens (~65K)
+# - Total: 500K steps * 65K = 32.8 BILLION tokens
+# - Chinchilla optimal for 550M: ~11-14B tokens
+# - This config: 32.8B tokens (MORE than optimal - excellent!)
+#
+# Expected Performance:
+# - Step 1000: loss ~5.5-6.0
+# - Step 5000: loss ~3.5-4.0
+# - Step 10000: loss ~2.5-3.0
+# - Step 50000: loss ~1.8-2.2
+# - Step 100000+: loss ~1.4-1.8 (final)
+

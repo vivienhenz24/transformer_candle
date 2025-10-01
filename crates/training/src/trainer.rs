@@ -425,6 +425,11 @@ impl Trainer {
                 continue;
             }
 
+            // Apply gradient clipping if configured
+            if let Some(max_norm) = self.config.optimizer.max_grad_norm {
+                self.clip_gradients(grads, max_norm as f64)?;
+            }
+
             let lr = if let Some(scheduler) = self.scheduler.as_mut() {
                 let lr = scheduler.step();
                 self.optimizer.set_learning_rate(lr);
@@ -525,6 +530,43 @@ impl Trainer {
             0.0
         };
         Ok((found_inf, norm))
+    }
+
+    fn clip_gradients(&self, grads: &mut GradStore, max_norm: f64) -> Result<(), TrainingError> {
+        // Calculate current gradient norm
+        let mut sum_squares = 0.0f64;
+        for tensor in &self.parameter_tensors {
+            if let Some(grad) = grads.get(tensor) {
+                let sq = grad
+                    .to_dtype(DType::F32)
+                    .map_err(to_runtime_error)?
+                    .sqr()
+                    .map_err(to_runtime_error)?
+                    .sum_all()
+                    .map_err(to_runtime_error)?
+                    .to_vec0::<f32>()
+                    .map_err(to_runtime_error)? as f64;
+                sum_squares += sq;
+            }
+        }
+        
+        let total_norm = sum_squares.sqrt();
+        
+        // Only clip if norm exceeds max_norm
+        if total_norm > max_norm {
+            let clip_coef = max_norm / (total_norm + 1e-6);
+            
+            // Scale all gradients by clip_coef
+            for tensor in &self.parameter_tensors {
+                if let Some(grad) = grads.remove(tensor) {
+                    let clipped = (grad * clip_coef)
+                        .map_err(to_runtime_error)?;
+                    grads.insert(tensor, clipped);
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     fn record_progress(&mut self, batch: &DataBatch, optimizer_steps: usize) {
