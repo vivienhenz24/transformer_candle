@@ -1,122 +1,110 @@
 ## transformer_candle
 
-Rust-first transformer stack built on Candle. The workspace is split into focused crates so you can train, evaluate, and repurpose components without touching unrelated code.
+Hi! This is a generative pre-trained transformer built using rust and Huggingface's candle. And no, there is no rational reason for building a transformer in rust. We just thought it would be more fun (spoiler alert: it wasn't).
 
+Currently training the ~1.2B param version on a RTX5090 via runpod, should take about 6-7 days.
+
+### Crate Interaction Map
 ```text
-                                +-----------------------------------------+
-                                | configs/* & guides                      |
-                                | - Experiment presets & walkthroughs     |
-                                +----------------------+------------------+
-                                                       |
-                                                       v
-+-----------------------------------------------------------------------------------------------+
-| training crate                                                                                |
-| binaries: orchestrate.rs & train.rs                                                           |
-| - orchestrate builds tokenizer configs, shards corpora, and writes training.toml               |
-| - train loads TrainingConfig, installs StreamingTextDataLoader, and drives the Trainer         |
-| - Trainer wires optimizer, scheduler, logging, evaluation, and checkpoint rotation             |
-+----------------------+-------------------------------+-------------------------------+--------+
-                       |                               |                               |
-                       | tokenizer artifacts            | newline shards / streaming     | model graph
-                       v                               v                               v
-+------------------------------+          +------------------------------+    +------------------------------+
-| tokenizer crate              |          | pretraining-data crate       |    | model crate                  |
-| - Config-driven byte-level   |          | - StreamingCorpus over shards|    | - Decoder-only Transformer   |
-|   BPE load/save              |          | - HuggingFaceStreamingCorpus |    |   assembly & caches          |
-| - Deterministic training     |          | - Emits iterators consumed   |    | - Exposes forward(), params  |
-|   when `train` feature set   |          |   by StreamingTextDataLoader |    | - Applies gradient-checkpoint|
-+---------------+--------------+          +---------------+--------------+    +---------------+--------------+
-                |                                         |                                   |
-                | tokenizer::build_*                      | batches of token ids              |
-                |                                         |                                   |
-                |                         +---------------v---------------+                   |
-                |                         | StreamingTextDataLoader       |                   |
-                |                         | (training crate)              |                   |
-                |                         | - Tokenizes lines via Arc     |                   |
-                |                         |   tokenizer                   |                   |
-                |                         | - Maintains shuffle buffer    |                   |
-                |                         | - Emits micro-batches         |                   |
-                +-------------------------> to Trainer                    |                   |
-                                          +---------------+---------------+                   |
-                                                          |                                   |
-                                                          v                                   v
-                                           +-----------------------------+      +-----------------------------+
-                                           | embedding crate             |      | grad/mask caches (model)    |
-                                           | - Token embeddings           |     | - Causal mask reuse         |
-                                           | - Positional / RoPE helpers  |     | - RoPE position cache       |
-                                           +---------------+-------------+      +---------------+-------------+
-                                                           |                                   |
-                                                           v                                   |
-                                    +----------------------+----------------+------------------+
-                                    | layers crate                             | attention crate |
-                                    | - Linear, norm, residual, MLP building   | - Fused/reference kernels |
-                                    | - Mixed-precision dtype policies         | - RoPE application modes   |
-                                    | - Activation helpers                     | - KV-cache utilities       |
-                                    +----------------------+------------------+------------------+----------+
-                                                           |                                  |
-                                                           +---------------+------------------+
-                                                                           |
-                                                                           v
-                                                         +---------------------------+
-                                                         | logits ▸ Trainer metrics |
-                                                         | checkpoints ▸ consumers   |
-                                                         +---------------------------+
+configs/*  ───────► training crate (orchestrate.rs, train.rs)
+                       │  parses configs, drives Trainer, handles checkpoints
+                       │
+         ┌─────────────┴─────────────┐
+         │                           │
+         ▼                           ▼
+ tokenizer crate            pretraining-data crate
+  builds/trains BBPE          streams newline shards or HF datasets
+         │                           │
+         └──────────────┬────────────┘
+                        ▼
+         StreamingTextDataLoader (training crate)
+                        │ tokenized batches
+                        ▼
+                   model crate
+                        │ forward pass
+       ┌────────────┬────────────┬────────────┐
+       ▼            ▼            ▼            ▼
+ embedding     attention      layers      cache utils
+ crate         crate          crate       (inside model)
+ (token +      (kernels,      (linear,    (masks,
+ positional)   RoPE, KV)      norm, MLP)  positions)
+                        │
+                        ▼
+              logits ▸ trainer metrics / checkpoints
 ```
 
-### Why You Might Like It
-- Modular Candle crates: fused/reference attention, rotary-aware decoder blocks, reusable embedding layers, and shared linear/norm utilities.
-- Training CLI with automatic CUDA/Metal/CPU choice, mixed-precision policy, gradient scaling, checkpoint rotation, and a gradient-checkpoint flag (currently a passthrough loop).
-- Data ingest from newline shards or on-demand Hugging Face streaming with optional local sharding to keep corpora manageable.
-- Orchestration binary that can tokenize, shard, emit configs, and launch training for laptops or RunPod-backed cloud experiments.
-- Byte-level BPE tokenizer support, including deterministic training when the `train` feature is enabled (used by the training crate).
+### Transformer Stack Layout
+```text
+input token ids
+      │
+      ▼
+embedding::token (tied input/output weights)
+      │ hidden states
+      ▼
+[repeat n_layers times]
+    ┌─────────────────────────────────────────────────────────────┐
+    │ layers::norm pre-norm                                        │
+    │   ▼                                                          │
+    │ attention::fused (QKV projection ▸ RoPE ▸ causal attention)   │
+    │   ▼                                                          │
+    │ residual connection (layers::residual)                       │
+    │   ▼                                                          │
+    │ layers::mlp (SiLU feed-forward, expansion ratio from config) │
+    │   ▼                                                          │
+    │ residual connection                                          │
+    └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+final norm (layers::norm) ──► embedding::token.linear_out ──► logits
+```
 
-### Workspace Tour
-- `crates/attention` – fused/reference kernels, KV cache helpers, and RoPE-aware configs; tweak behaviour with `ATTN_*` environment variables.
-- `crates/embedding` – token/positional embeddings with tied output heads.
-- `crates/layers` – linear, activation, norm, residual, and dtype helpers shared across blocks.
-- `crates/model` – decoder-only transformer that stitches embeddings, attention, and feed-forward layers with rotary support and mask/position caches.
-- `crates/tokenizer` – config-driven byte-level BPE loader/trainer.
-- `crates/pretraining-data` – newline shard streaming plus a Hugging Face dataset subprocess bridge.
-- `crates/training` – `orchestrate` + `train` binaries, training loop, optimizer/scheduler, logging, metrics, and checkpoint management.
-- `configs/` – experiment presets from local smoke tests to multi-billion parameter RunPod runs.
-- `infra/` – RunPod manifests, full setup guide, and supporting docs.
+### Directory Structure (trimmed)
+```text
+.
+├── Cargo.toml
+├── README.md
+├── configs/                (experiment presets)
+├── crates/
+│   ├── attention/          (fused/reference kernels, RoPE + KV cache controls)
+│   ├── embedding/          (token embeddings, positional/RoPE utilities)
+│   ├── layers/             (linear, norm, residual, activations, dtype policies)
+│   ├── model/              (decoder-only transformer wrapper & caches)
+│   ├── pretraining-data/   (newline shard streaming + HF dataset bridge)
+│   ├── tokenizer/          (config-driven byte-level BPE loader/trainer)
+│   └── training/           (Trainer core, orchestrate/train binaries)
+├── infra/                  (RunPod manifests and setup notes)
+├── runs/                   (generated artifacts: tokenizer, checkpoints, logs)
+└── guides/*.md             (streaming and hardware walkthroughs)
+```
 
-### Launch a Local Run
-1. Install Rust (`rustup default stable`) and ensure `cargo` is on your path.
-2. Fetch dependencies: `cargo build --workspace`.
-3. Generate artifacts via orchestrate:
-   ```
-   cargo run -p training --bin orchestrate -- \
-     --mode local \
-     --input crates/pretraining-data/input.txt \
-     --run-dir runs/local-smoke
-   ```
-   You will get tokenizer assets, optional shards, `training.toml`, and `streaming_config.json` when streaming is toggled.
-4. Train with the emitted config:
-   ```
-   cargo run -p training --bin train -- \
-     --config runs/local-smoke/training.toml
-   ```
-   Add `--resume` to pick up the latest checkpoint or `--override key=value` to patch settings on the fly.
+### Key Crates
+- `crates/training` – Trainer, optimizer, scheduler, logging, checkpointing, and the `orchestrate` / `train` binaries.
+- `crates/tokenizer` – Byte-level BPE loader with optional deterministic training when the `train` feature is on.
+- `crates/pretraining-data` – Streaming corpus abstractions for newline shards and Hugging Face datasets.
+- `crates/model` – Decoder-only transformer wrapper that stitches embeddings, attention, and MLP blocks with mask/position caches.
+- `crates/attention` – Fused/reference kernels plus KV cache helpers and RoPE settings.
+- `crates/embedding` – Token embeddings, positional/rotary helpers, and tied output projection.
+- `crates/layers` – Linear layers, norms, residual/dropout wrappers, activation helpers, and dtype policies.
 
-### Streaming & Cloud Notes
-- Drop a `streaming_config.json` next to your training config (or let orchestrate create it) and `train` will fetch Hugging Face data into temporary shards before launching.
-- Cloud mode (`--mode cloud`) swaps directory layouts to `/workspace/...`, shards corpora automatically, and wires RunPod-friendly checkpoint/log paths.
-- Public checkpoints live at `https://huggingface.co/vivienhenz/sconce`; mirror them into `runs/pretrained` (or your chosen path) rather than committing weights.
+### Common Commands
+- Build once to pull Candle/tokenizers: `cargo build --workspace`
+- Run orchestrator locally:
+  ```
+  cargo run -p training --bin orchestrate -- \
+    --mode local \
+    --input crates/pretraining-data/input.txt \
+    --run-dir runs/local-smoke
+  ```
+- Launch training with the generated config:
+  ```
+  cargo run -p training --bin train -- \
+    --config runs/local-smoke/training.toml
+  ```
+  Append `--resume` to pick up the latest checkpoint or `--override key=value` for on-the-fly tweaks.
 
-### Configuration & Precision
-- Training configs accept TOML/YAML/JSON. `runtime.precision` maps to Candle dtypes (BF16 by default) and enables master weights plus gradient scaling.
-- Model hyperparameters resolve through `ModelOverrides`, with validation ensuring vocab/heads/ff-ratio sanity before the trainer touches the device.
-- Gradient checkpointing flags and the attention mask/position caches help keep memory manageable for longer sequences.
-
-### Develop Confidently
-- Lint/format: `cargo fmt` and `cargo clippy --all-targets --workspace`.
-- Test: `cargo test --workspace`; add `--features train` to exercise tokenizer training.
-- Instrumentation: `RUST_LOG=info` for richer logs, `ATTN_BACKEND=fused|reference` to force attention kernels, and `cuda_is_available`/`metal_is_available` checks print automatically at startup.
-- Clean up temporary streaming shards in `/workspace/tmp_streaming_shards` (created when streaming on cloud backends).
-
-### Dive Deeper
-- `COMPLETE_STREAMING_GUIDE.md` – full walkthrough of streaming workflows.
-- `QUICK_START_STREAMING.md` – minimal checklist for streaming experiments.
-- `RUNPOD_COMPLETE_SETUP.md` & `infra/runpod.md` – provisioning notes for RunPod.
-- `RTX5090_TRAINING_GUIDE.md` – RTX 5090 specific tuning advice.
+### Notes
+- Drop a `streaming_config.json` next to any training config and the `train` binary will stream from Hugging Face into temporary shards before starting.
+- `runtime.precision` selects the Candle dtype (BF16 by default) and toggles gradient scaling/master weights.
+- Attention backend, precision, and KV behaviour can be forced via `ATTN_*` environment variables.
+- Lint/test helpers: `cargo fmt`, `cargo clippy --all-targets --workspace`, `cargo test --workspace` (`--features train` for tokenizer training coverage).
+- Cloud manifests and longer walkthroughs live under `infra/` and the guide docs in the repository root.
