@@ -1,39 +1,71 @@
 ## transformer_candle
 
-Hi! We built a transformer using Huggingface's candle. And no, there is absolutely no rational reason for building this in rust. Except that we thought it would be more fun (it wasn't).
-
-The workspace is split into focused crates so you can train, evaluate, and repurpose components without touching unrelated code.
+Rust-first transformer stack built on Candle. The workspace is split into focused crates so you can train, evaluate, and repurpose components without touching unrelated code.
 
 ```text
-                                ┌────────────────────────┐
-                                │ configs/* & guides     │
-                                │  (experiment recipes)  │
-                                └────────────┬───────────┘
-                                             │
-                 ┌───────────────────────────┴──────────────────────────┐
-                 │                   orchestrate CLI                   │
-                 │ tokenization ▸ sharding ▸ config generation ▸ launch │
-                 └───────────────┬──────────────────────────┬───────────┘
-                                 │                          │
-                      tokenizer crate                 pretraining-data crate
-                    (byte-level BPE load/train)     (newline shards & HF streaming)
-                                 │                          │
-                                 └──────────┬───────────────┘
-                                            │
-                                 training crate (`train`)
-                      config parsing ▸ data loader ▸ optimizer ▸ logs
-                                            │
-                                            v
-                    model crate (decoder-only transformer with RoPE + caches)
-                   attention ▸ embeddings ▸ layers ▸ gradient checkpoint toggle
-                                            │
-                                            v
-                         checkpoints ▸ metrics ▸ downstream consumers
+                                +-----------------------------------------+
+                                | configs/* & guides                      |
+                                | - Experiment presets & walkthroughs     |
+                                +----------------------+------------------+
+                                                       |
+                                                       v
++-----------------------------------------------------------------------------------------------+
+| training crate                                                                                |
+| binaries: orchestrate.rs & train.rs                                                           |
+| - orchestrate builds tokenizer configs, shards corpora, and writes training.toml               |
+| - train loads TrainingConfig, installs StreamingTextDataLoader, and drives the Trainer         |
+| - Trainer wires optimizer, scheduler, logging, evaluation, and checkpoint rotation             |
++----------------------+-------------------------------+-------------------------------+--------+
+                       |                               |                               |
+                       | tokenizer artifacts            | newline shards / streaming     | model graph
+                       v                               v                               v
++------------------------------+          +------------------------------+    +------------------------------+
+| tokenizer crate              |          | pretraining-data crate       |    | model crate                  |
+| - Config-driven byte-level   |          | - StreamingCorpus over shards|    | - Decoder-only Transformer   |
+|   BPE load/save              |          | - HuggingFaceStreamingCorpus |    |   assembly & caches          |
+| - Deterministic training     |          | - Emits iterators consumed   |    | - Exposes forward(), params  |
+|   when `train` feature set   |          |   by StreamingTextDataLoader |    | - Applies gradient-checkpoint|
++---------------+--------------+          +---------------+--------------+    +---------------+--------------+
+                |                                         |                                   |
+                | tokenizer::build_*                      | batches of token ids              |
+                |                                         |                                   |
+                |                         +---------------v---------------+                   |
+                |                         | StreamingTextDataLoader       |                   |
+                |                         | (training crate)              |                   |
+                |                         | - Tokenizes lines via Arc     |                   |
+                |                         |   tokenizer                   |                   |
+                |                         | - Maintains shuffle buffer    |                   |
+                |                         | - Emits micro-batches         |                   |
+                +-------------------------> to Trainer                    |                   |
+                                          +---------------+---------------+                   |
+                                                          |                                   |
+                                                          v                                   v
+                                           +-----------------------------+      +-----------------------------+
+                                           | embedding crate             |      | grad/mask caches (model)    |
+                                           | - Token embeddings           |     | - Causal mask reuse         |
+                                           | - Positional / RoPE helpers  |     | - RoPE position cache       |
+                                           +---------------+-------------+      +---------------+-------------+
+                                                           |                                   |
+                                                           v                                   |
+                                    +----------------------+----------------+------------------+
+                                    | layers crate                             | attention crate |
+                                    | - Linear, norm, residual, MLP building   | - Fused/reference kernels |
+                                    | - Mixed-precision dtype policies         | - RoPE application modes   |
+                                    | - Activation helpers                     | - KV-cache utilities       |
+                                    +----------------------+------------------+------------------+----------+
+                                                           |                                  |
+                                                           +---------------+------------------+
+                                                                           |
+                                                                           v
+                                                         +---------------------------+
+                                                         | logits ▸ Trainer metrics |
+                                                         | checkpoints ▸ consumers   |
+                                                         +---------------------------+
 ```
 
 ### Why You Might Like It
 - Modular Candle crates: fused/reference attention, rotary-aware decoder blocks, reusable embedding layers, and shared linear/norm utilities.
-- Training CLI with automatic CUDA/Metal/CPU choice, mixed-precision policy, gradient scaling, checkpoint rotation, and a gradient-checkpoint flag (currently a passthrough loop). 
+- Training CLI with automatic CUDA/Metal/CPU choice, mixed-precision policy, gradient scaling, checkpoint rotation, and a gradient-checkpoint flag (currently a passthrough loop).
 - Data ingest from newline shards or on-demand Hugging Face streaming with optional local sharding to keep corpora manageable.
 - Orchestration binary that can tokenize, shard, emit configs, and launch training for laptops or RunPod-backed cloud experiments.
 - Byte-level BPE tokenizer support, including deterministic training when the `train` feature is enabled (used by the training crate).
