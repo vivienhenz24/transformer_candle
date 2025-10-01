@@ -41,10 +41,12 @@ main() {
     local shards_dir="${SHARDS_DIR:-/workspace/tmp_streaming_shards}"
     local lines_per_shard="${LINES_PER_SHARD:-100000}"
     local hf_workers="${HF_MAX_WORKERS:-8}"
+    local parquet_limit="${HF_PARQUET_LIMIT:-0}"
     local vocab_size="${VOCAB_SIZE:-50000}"
     local tokenizer_max_lines="${TOKENIZER_MAX_LINES:-1000000}"
     local skip_download="${SKIP_DOWNLOAD:-0}"
     local skip_shard_convert="${SKIP_SHARD_CONVERT:-0}"
+    local target_shards="${TARGET_SHARDS:-0}"
 
     log "Run directory: $run_root"
     log "Dataset cache: $dataset_dir"
@@ -59,13 +61,13 @@ main() {
         "$run_root/best" "$run_root/tensorboard"
 
     if [[ "$skip_download" != "1" ]]; then
-        download_dataset "$dataset_id" "$dataset_dir" "$hf_workers"
+        download_dataset "$dataset_id" "$dataset_dir" "$hf_workers" "$parquet_limit"
     else
         log "Skipping dataset download (SKIP_DOWNLOAD=1)"
     fi
 
     if [[ "$skip_shard_convert" != "1" ]]; then
-        convert_parquet_to_shards "$dataset_dir" "$shards_dir" "$lines_per_shard"
+        convert_parquet_to_shards "$dataset_dir" "$shards_dir" "$lines_per_shard" "$target_shards"
     else
         log "Skipping shard conversion (SKIP_SHARD_CONVERT=1)"
     fi
@@ -119,26 +121,52 @@ download_dataset() {
     local dataset_id="$1"
     local dataset_dir="$2"
     local max_workers="$3"
+    local parquet_limit="$4"
 
     log "Downloading dataset $dataset_id -> $dataset_dir"
-    DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" \
+    DATASET_ID="$dataset_id" DATASET_DIR="$dataset_dir" HF_WORKERS="$max_workers" PARQUET_LIMIT="$parquet_limit" \
     python3 - <<'PY'
 import os
-from huggingface_hub import snapshot_download
+from pathlib import Path
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 dataset_id = os.environ['DATASET_ID']
 local_dir = os.environ['DATASET_DIR']
 max_workers = int(os.environ['HF_WORKERS'])
+parquet_limit = int(os.environ.get('PARQUET_LIMIT', '0'))
 
-snapshot_download(
-    repo_id=dataset_id,
-    repo_type="dataset",
-    local_dir=local_dir,
-    local_dir_use_symlinks=False,
-    resume_download=True,
-    allow_patterns=["data/*.parquet"],
-    max_workers=max_workers,
-)
+if parquet_limit <= 0:
+    snapshot_download(
+        repo_id=dataset_id,
+        repo_type="dataset",
+        local_dir=local_dir,
+        local_dir_use_symlinks=False,
+        allow_patterns=["data/*.parquet"],
+        max_workers=max_workers,
+        resume_download=True,
+    )
+else:
+    api = HfApi()
+    files = [
+        file
+        for file in api.list_repo_files(dataset_id, repo_type="dataset")
+        if file.startswith("data/") and file.endswith(".parquet")
+    ]
+    files.sort()
+    selected = files[:parquet_limit]
+    if not selected:
+        raise SystemExit("No parquet files found in dataset")
+    Path(local_dir).mkdir(parents=True, exist_ok=True)
+    for idx, filename in enumerate(selected, 1):
+        print(f"Downloading {idx}/{len(selected)} -> {filename}")
+        hf_hub_download(
+            repo_id=dataset_id,
+            repo_type="dataset",
+            filename=filename,
+            local_dir=local_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+        )
 PY
 }
 
@@ -146,9 +174,10 @@ convert_parquet_to_shards() {
     local dataset_dir="$1"
     local shards_dir="$2"
     local lines_per_shard="$3"
+    local target_shards="$4"
 
     log "Converting parquet to text shards"
-    PARQUET_DIR="$dataset_dir" SHARDS_DIR="$shards_dir" LINES_PER_SHARD="$lines_per_shard" \
+    PARQUET_DIR="$dataset_dir" SHARDS_DIR="$shards_dir" LINES_PER_SHARD="$lines_per_shard" TARGET_SHARDS="$target_shards" \
     python3 - <<'PY'
 import os
 from pathlib import Path
@@ -157,6 +186,7 @@ import pyarrow.dataset as ds
 DATASET_DIR = Path(os.environ['PARQUET_DIR'])
 SHARDS_DIR = Path(os.environ['SHARDS_DIR'])
 LINES_PER_SHARD = int(os.environ['LINES_PER_SHARD'])
+TARGET_SHARDS = int(os.environ.get('TARGET_SHARDS', '0'))
 
 SHARDS_DIR.mkdir(parents=True, exist_ok=True)
 paths = sorted(DATASET_DIR.glob('data/*.parquet'))
@@ -165,9 +195,10 @@ if not paths:
 
 buffer = []
 shard_idx = 0
+stop_processing = False
 
 def flush():
-    global buffer, shard_idx
+    global buffer, shard_idx, stop_processing
     if not buffer:
         return
     shard_path = SHARDS_DIR / f"shard_{shard_idx:04}.txt"
@@ -177,6 +208,8 @@ def flush():
     print(f"wrote {shard_path} with {len(buffer)} lines")
     buffer.clear()
     shard_idx += 1
+    if TARGET_SHARDS and shard_idx >= TARGET_SHARDS:
+        stop_processing = True
 
 def process_file(path: Path):
     dataset = ds.dataset(path, format='parquet')
@@ -188,12 +221,20 @@ def process_file(path: Path):
             buffer.append(text)
             if len(buffer) >= LINES_PER_SHARD:
                 flush()
+                if stop_processing:
+                    return
+        if stop_processing:
+            return
 
 for parquet_path in paths:
+    if stop_processing:
+        break
     print(f"processing {parquet_path}")
     process_file(parquet_path)
 
-flush()
+if not stop_processing and buffer:
+    flush()
+
 print(f"conversion complete -> total shards: {shard_idx}")
 PY
 }
