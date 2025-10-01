@@ -156,7 +156,7 @@ impl TokenEmbedding {
         }
 
         let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
-        
+
         if min_id < 0 {
             return Err(Error::Msg(format!(
                 "encountered negative token id {} (minimum)",

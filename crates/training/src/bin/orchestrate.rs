@@ -37,7 +37,10 @@ const CLOUD_HF_CACHE_ROOT: &str = "/workspace/hf_cache";
     about = "End-to-end tokenizer + transformer training pipeline"
 )]
 struct Args {
-    #[arg(long, help = "Path to the text corpus used for training (ignored if --stream is set)")]
+    #[arg(
+        long,
+        help = "Path to the text corpus used for training (ignored if --stream is set)"
+    )]
     input: Option<PathBuf>,
 
     #[arg(
@@ -66,10 +69,7 @@ struct Args {
     )]
     split: String,
 
-    #[arg(
-        long,
-        help = "Maximum number of samples to stream (None = unlimited)"
-    )]
+    #[arg(long, help = "Maximum number of samples to stream (None = unlimited)")]
     max_samples: Option<usize>,
 
     #[arg(
@@ -555,7 +555,7 @@ fn run_streaming(args: Args) -> Result<()> {
         .run_dir
         .clone()
         .unwrap_or_else(|| Path::new(CLOUD_RUNS_ROOT).join(&experiment));
-    
+
     configure_hf_cache()?;
     let artifacts = prepare_artifacts(&args, run_dir)?;
 
@@ -1417,8 +1417,9 @@ fn build_training_config(
 }
 
 fn write_special_tokens(path: &Path) -> Result<()> {
-    let mut file = fs::File::create(path)?;
-    file.write_all(b"<pad>\n<bos>\n<eos>\n")?;
+    let tokens = ["<pad>", "<bos>", "<eos>"];
+    let json = serde_json::to_vec_pretty(&tokens)?;
+    fs::write(path, json)?;
     Ok(())
 }
 
@@ -1440,36 +1441,38 @@ fn default_cloud_experiment() -> String {
 
 fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<TokenizerOutcome> {
     use pretraining_data::HuggingFaceStreamingCorpus;
+    use tokenizer::config::{ArtifactsCfg, Config as TokenizerTrainConfig, ModelCfg, TrainingCfg};
     use tokenizer::train_bbpe;
-    use tokenizer::config::{Config as TokenizerTrainConfig, ModelCfg, TrainingCfg, ArtifactsCfg};
 
     println!("Creating streaming corpus for tokenizer training...");
-    
+
     // Limit samples for tokenizer training
     let max_samples_for_tokenizer = args.tokenizer_max_lines.or(Some(1_000_000));
-    
+
     let corpus = HuggingFaceStreamingCorpus::new(
         args.dataset.clone(),
         args.split.clone(),
         args.stream_batch_size,
         max_samples_for_tokenizer,
-    ).map_err(|e| PipelineError::Invalid(format!("Failed to create streaming corpus: {}", e)))?;
+    )
+    .map_err(|e| PipelineError::Invalid(format!("Failed to create streaming corpus: {}", e)))?;
 
     println!("Collecting samples for tokenizer training...");
     let mut texts = Vec::new();
-    let mut stream = corpus.stream()
+    let mut stream = corpus
+        .stream()
         .map_err(|e| PipelineError::Invalid(format!("Failed to start stream: {}", e)))?;
-    
+
     let mut count = 0;
     for result in stream {
         let text = result.map_err(|e| PipelineError::Invalid(format!("Stream error: {}", e)))?;
         texts.push(text);
         count += 1;
-        
+
         if count % 10000 == 0 {
             println!("Collected {} samples for tokenizer...", count);
         }
-        
+
         if let Some(max) = max_samples_for_tokenizer {
             if count >= max {
                 break;
@@ -1477,7 +1480,10 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
         }
     }
 
-    println!("Collected {} samples total. Training tokenizer...", texts.len());
+    println!(
+        "Collected {} samples total. Training tokenizer...",
+        texts.len()
+    );
 
     // Write texts to temporary file for tokenizer training
     let temp_input = output_dir.join("temp_streaming_input.txt");
@@ -1486,7 +1492,10 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
         writeln!(file, "{}", text)?;
     }
     file.flush()?;
-    println!("Wrote training data to temporary file: {}", temp_input.display());
+    println!(
+        "Wrote training data to temporary file: {}",
+        temp_input.display()
+    );
 
     // Configure tokenizer training
     let config = TokenizerTrainConfig {
@@ -1494,10 +1503,7 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
             vocab_size: args.vocab_size,
             min_frequency: 2,
             dropout: None,
-            special_tokens: vec![
-                "<|endoftext|>".to_string(),
-                "<|pad|>".to_string(),
-            ],
+            special_tokens: vec!["<|endoftext|>".to_string(), "<|pad|>".to_string()],
             byte_fallback_on_decode: true,
         },
         pretokenizer: TokenizerByteLevelCfg {
@@ -1524,14 +1530,16 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
 
     // Train tokenizer
     fs::create_dir_all(output_dir)?;
-    let _tokenizer = train_bbpe(&config)
-        .map_err(|e| PipelineError::Tokenizer(e))?;
-    
+    let _tokenizer = train_bbpe(&config).map_err(|e| PipelineError::Tokenizer(e))?;
+
     // Clean up temp file
     let _ = fs::remove_file(&temp_input);
 
     let tokenizer_path = output_dir.join("tokenizer.json");
-    println!("✅ Tokenizer trained and saved to {}", tokenizer_path.display());
+    println!(
+        "✅ Tokenizer trained and saved to {}",
+        tokenizer_path.display()
+    );
 
     Ok(TokenizerOutcome {
         path: tokenizer_path,
@@ -1541,10 +1549,10 @@ fn train_tokenizer_from_stream(args: &Args, output_dir: &Path) -> Result<Tokeniz
 
 fn copy_tokenizer_artifacts(source: &Path, dest_dir: &Path) -> Result<()> {
     fs::create_dir_all(dest_dir)?;
-    
-    let source_dir = source.parent().ok_or_else(|| {
-        PipelineError::Invalid("Tokenizer path has no parent directory".into())
-    })?;
+
+    let source_dir = source
+        .parent()
+        .ok_or_else(|| PipelineError::Invalid("Tokenizer path has no parent directory".into()))?;
 
     for filename in &["tokenizer.json", "vocab.json", "merges.txt"] {
         let src = source_dir.join(filename);
@@ -1558,7 +1566,11 @@ fn copy_tokenizer_artifacts(source: &Path, dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn generate_streaming_config(args: &Args, artifacts: &PipelineArtifacts, experiment: &str) -> Result<()> {
+fn generate_streaming_config(
+    args: &Args,
+    artifacts: &PipelineArtifacts,
+    experiment: &str,
+) -> Result<()> {
     // Write streaming metadata
     let metadata_path = artifacts.run_dir.join("streaming_config.json");
     let metadata = serde_json::json!({
@@ -1568,7 +1580,7 @@ fn generate_streaming_config(args: &Args, artifacts: &PipelineArtifacts, experim
         "stream_batch_size": args.stream_batch_size,
         "experiment": experiment,
     });
-    
+
     let metadata_json = serde_json::to_string_pretty(&metadata)?;
     fs::write(&metadata_path, metadata_json)?;
     println!("Wrote streaming metadata to {}", metadata_path.display());
@@ -1576,7 +1588,10 @@ fn generate_streaming_config(args: &Args, artifacts: &PipelineArtifacts, experim
     // Generate standard training config (for reference)
     // Note: The actual streaming training binary will use the metadata above
     println!("\n📝 Note: Use the train-streaming binary for streaming mode");
-    println!("The streaming config is saved in: {}", metadata_path.display());
+    println!(
+        "The streaming config is saved in: {}",
+        metadata_path.display()
+    );
 
     Ok(())
 }

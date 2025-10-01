@@ -63,9 +63,8 @@ This creates:
 cp configs/rtx5090_1b.yaml /workspace/runs/rtx5090-1b/training.yaml
 
 # Create special tokens
-cat > /workspace/runs/rtx5090-1b/special_tokens.txt <<EOF
-<|endoftext|>
-<|pad|>
+cat > /workspace/runs/rtx5090-1b/special_tokens.txt <<'EOF'
+["<|endoftext|>", "<|pad|>"]
 EOF
 ```
 

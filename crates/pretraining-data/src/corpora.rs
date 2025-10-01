@@ -1,8 +1,7 @@
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
-use std::collections::VecDeque;
-use rayon::prelude::*;
 
 /// Trait for corpus types that can stream text data
 pub trait TextCorpus {
@@ -44,69 +43,59 @@ impl TextCorpus for StreamingCorpus {
     type Stream = CorpusStream;
 
     fn stream(&self) -> io::Result<Self::Stream> {
-        println!("[pretraining-data crate] StreamingCorpus::stream with {} shards", self.shards.len());
-        CorpusStream::new_batched(self.shards.clone())
+        println!(
+            "[pretraining-data crate] StreamingCorpus::stream with {} shards",
+            self.shards.len()
+        );
+        CorpusStream::new(self.shards.clone())
     }
 }
 
 pub struct CorpusStream {
-    lines: VecDeque<String>,
     shards: Vec<PathBuf>,
     next_shard: usize,
-    batch_size: usize,
+    current_reader: Option<io::Lines<BufReader<File>>>,
 }
 
 impl CorpusStream {
-    fn new_batched(shards: Vec<PathBuf>) -> io::Result<Self> {
-        println!("[pretraining-data crate] Using batched parallel streaming (10 shards at a time)");
-        let mut stream = Self {
-            lines: VecDeque::new(),
+    fn new(shards: Vec<PathBuf>) -> io::Result<Self> {
+        println!("[pretraining-data crate] Using sequential streaming (1 shard at a time)");
+        Ok(Self {
             shards,
             next_shard: 0,
-            batch_size: 10, // Process 10 shards in parallel at a time
-        };
-        stream.load_next_batch()?;
-        Ok(stream)
+            current_reader: None,
+        })
     }
 
-    fn load_next_batch(&mut self) -> io::Result<()> {
-        if self.next_shard >= self.shards.len() {
-            return Ok(());
-        }
-        
-        let batch_end = (self.next_shard + self.batch_size).min(self.shards.len());
-        let batch = &self.shards[self.next_shard..batch_end];
-        
-        println!(
-            "[pretraining-data crate] Loading shard batch {}-{} of {} (parallel) - Progress: {:.1}%",
-            self.next_shard,
-            batch_end - 1,
-            self.shards.len(),
-            (self.next_shard as f64 / self.shards.len() as f64) * 100.0
-        );
-        
-        // Read this batch of shards in parallel
-        let batch_lines: Vec<String> = batch
-            .par_iter()
-            .flat_map(|path| {
-            match File::open(path) {
+    fn advance_shard(&mut self) -> io::Result<bool> {
+        while self.next_shard < self.shards.len() {
+            let shard_index = self.next_shard;
+            let shard_path = &self.shards[shard_index];
+            println!(
+                "[pretraining-data crate] Streaming shard {} of {} -> {:?}",
+                shard_index + 1,
+                self.shards.len(),
+                shard_path
+            );
+
+            match File::open(shard_path) {
                 Ok(file) => {
-                        BufReader::new(file)
-                            .lines()
-                            .filter_map(|line| line.ok())
-                            .filter(|line| !line.trim().is_empty())
-                            .collect::<Vec<String>>()
-                    }
-                    Err(_) => Vec::new(),
+                    self.current_reader = Some(BufReader::new(file).lines());
+                    self.next_shard += 1;
+                    return Ok(true);
                 }
-            })
-            .collect();
-        
-        self.lines.extend(batch_lines);
-        self.next_shard = batch_end;
-        
-        println!("[pretraining-data crate] Batch loaded: {} lines in buffer", self.lines.len());
-        Ok(())
+                Err(err) => {
+                    println!(
+                        "[pretraining-data crate] Warning: failed to open shard {:?}: {}",
+                        shard_path, err
+                    );
+                    self.next_shard += 1;
+                    continue;
+                }
+            }
+        }
+
+        Ok(false)
     }
 }
 
@@ -114,15 +103,31 @@ impl Iterator for CorpusStream {
     type Item = io::Result<String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // If buffer is empty, load next batch
-        if self.lines.is_empty() && self.next_shard < self.shards.len() {
-            if let Err(e) = self.load_next_batch() {
-                return Some(Err(e));
+        loop {
+            if let Some(reader) = self.current_reader.as_mut() {
+                match reader.next() {
+                    Some(Ok(line)) => {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        return Some(Ok(line));
+                    }
+                    Some(Err(err)) => {
+                        return Some(Err(err));
+                    }
+                    None => {
+                        self.current_reader = None;
+                        continue;
+                    }
+                }
+            }
+
+            match self.advance_shard() {
+                Ok(true) => continue,
+                Ok(false) => return None,
+                Err(err) => return Some(Err(err)),
             }
         }
-        
-        // Return next line from buffer
-        self.lines.pop_front().map(Ok)
     }
 }
 
@@ -189,7 +194,7 @@ impl HFCorpusStream {
         max_samples: Option<usize>,
     ) -> io::Result<Self> {
         use std::process::{Command, Stdio};
-        
+
         // Python script that runs as a long-lived process
         let python_script = format!(
             r#"
@@ -267,9 +272,10 @@ if __name__ == "__main__":
                 )
             })?;
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Failed to capture stdout")
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to capture stdout"))?;
 
         let mut stream = Self {
             current_index: 0,
@@ -291,10 +297,11 @@ if __name__ == "__main__":
 
     fn wait_for_ready(&mut self) -> io::Result<()> {
         use std::io::BufRead;
-        
-        let reader = self.stdout_reader.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "No stdout reader available")
-        })?;
+
+        let reader = self
+            .stdout_reader
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No stdout reader available"))?;
 
         let mut line = String::new();
         while reader.read_line(&mut line)? > 0 {
@@ -319,16 +326,17 @@ if __name__ == "__main__":
 
     fn fetch_next_batch(&mut self) -> io::Result<bool> {
         use std::io::BufRead;
-        
+
         if self.finished {
             return Ok(false);
         }
 
-        let reader = self.stdout_reader.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "No stdout reader available")
-        })?;
+        let reader = self
+            .stdout_reader
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No stdout reader available"))?;
 
-            let mut line = String::new();
+        let mut line = String::new();
         while reader.read_line(&mut line)? > 0 {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
                 // Check for batch data
@@ -342,7 +350,7 @@ if __name__ == "__main__":
                         return Ok(true);
                     }
                 }
-                
+
                 // Check for completion
                 if parsed.get("done").and_then(|v| v.as_bool()) == Some(true) {
                     if let Some(total) = parsed.get("total").and_then(|v| v.as_u64()) {

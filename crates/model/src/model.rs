@@ -162,11 +162,11 @@ impl Model {
         // This is a simplified version that processes layers in chunks.
         // The main benefit comes from not keeping all intermediate activations
         // in the computation graph simultaneously.
-        
+
         for block in &self.blocks {
             hidden = block.forward(&hidden, Some(mask), positions)?;
         }
-        
+
         Ok(hidden)
     }
 

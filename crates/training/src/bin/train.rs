@@ -76,7 +76,7 @@ fn run() -> Result<(), TrainingError> {
     // Check if there's a streaming config in the same directory
     let config_dir = args.config.parent().unwrap_or(std::path::Path::new("."));
     let streaming_config_path = config_dir.join("streaming_config.json");
-    
+
     if streaming_config_path.exists() {
         println!("🌊 Detected streaming configuration, using streaming mode");
         return run_streaming_training(config, &streaming_config_path);
@@ -272,17 +272,17 @@ fn run_streaming_training(
     mut config: TrainingConfig,
     streaming_config_path: &std::path::Path,
 ) -> Result<(), TrainingError> {
-    use std::fs;
     use pretraining_data::HuggingFaceStreamingCorpus;
     use pretraining_data::TextCorpus;
-    
+    use std::fs;
+
     // Load streaming config
     let streaming_json = fs::read_to_string(streaming_config_path)
         .map_err(|e| TrainingError::runtime(format!("Failed to read streaming config: {}", e)))?;
-    
+
     let streaming_config: serde_json::Value = serde_json::from_str(&streaming_json)
         .map_err(|e| TrainingError::runtime(format!("Failed to parse streaming config: {}", e)))?;
-    
+
     let dataset = streaming_config["dataset"]
         .as_str()
         .ok_or_else(|| TrainingError::runtime("Missing 'dataset' in streaming config"))?;
@@ -294,36 +294,38 @@ fn run_streaming_training(
         .as_u64()
         .map(|n| n as usize)
         .unwrap_or(1000);
-    
+
     println!("🌊 Streaming mode: {} ({})", dataset, split);
-    
+
     // Create temporary shards by streaming and writing to disk
     // This is a hybrid approach: stream from HF, write temp files, use existing Trainer
     println!("📥 Streaming data from HuggingFace...");
-    
+
     let temp_dir = std::path::PathBuf::from("/workspace/tmp_streaming_shards");
     fs::create_dir_all(&temp_dir)?;
-    
+
     let corpus = HuggingFaceStreamingCorpus::new(
         dataset.to_string(),
         split.to_string(),
         stream_batch_size,
         max_samples,
-    ).map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
-    
+    )
+    .map_err(|e| TrainingError::runtime(format!("Failed to create streaming corpus: {}", e)))?;
+
     // Writing shards
-    let mut stream = corpus.stream()
+    let mut stream = corpus
+        .stream()
         .map_err(|e| TrainingError::runtime(format!("Failed to start stream: {}", e)))?;
-    
+
     let mut shard_paths = Vec::new();
     let mut current_shard = 0;
     let lines_per_shard = 100_000;
     let mut current_file = None;
     let mut line_count = 0;
-    
+
     for (idx, result) in stream.enumerate() {
         let text = result.map_err(|e| TrainingError::runtime(format!("Stream error: {}", e)))?;
-        
+
         // Open new shard if needed
         if line_count % lines_per_shard == 0 {
             if let Some(file) = current_file.take() {
@@ -335,32 +337,36 @@ fn run_streaming_training(
             current_file = Some(std::fs::File::create(&shard_path)?);
             current_shard += 1;
         }
-        
+
         if let Some(ref mut file) = current_file {
             use std::io::Write;
             writeln!(file, "{}", text)?;
         }
-        
+
         line_count += 1;
-        
+
         if idx % 10000 == 0 && idx > 0 {
             if idx % 1_000_000 == 0 && idx > 0 {
                 println!("  Streamed {} samples...", idx);
             }
         }
     }
-    
-    println!("✅ Streamed {} samples into {} shards", line_count, shard_paths.len());
-    
+
+    println!(
+        "✅ Streamed {} samples into {} shards",
+        line_count,
+        shard_paths.len()
+    );
+
     // Update config to use temporary shards
     config.data.train_shards = shard_paths.clone();
     config.data.validation_shards = shard_paths; // Use same for validation (could split if needed)
-    
+
     println!("🚀 Starting training...\n");
-    
+
     // Use standard Trainer with the temporary shards
     let mut trainer = Trainer::new(config)?;
-    
+
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let handler_flag = shutdown_flag.clone();
     ctrlc::set_handler(move || {
@@ -369,10 +375,10 @@ fn run_streaming_training(
     .map_err(|err| TrainingError::runtime(format!("failed to install signal handler: {err}")))?;
 
     trainer.train_with_shutdown(|| shutdown_flag.load(Ordering::Relaxed))?;
-    
+
     // Cleanup temporary shards
     // Cleaning up
     let _ = fs::remove_dir_all(&temp_dir);
-    
+
     Ok(())
 }

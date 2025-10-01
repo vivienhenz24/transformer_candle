@@ -372,7 +372,7 @@ pub fn apply_rope_to_qk(
 
     let sin_slice = sin.narrow(0, pos_start, seq_len)?;
     let cos_slice = cos.narrow(0, pos_start, seq_len)?;
-    
+
     let apply_one = |tensor: &Tensor| -> Result<Tensor> {
         let main = tensor.narrow(3, 0, rotate_dim)?;
         let tail_dim = head_dim - rotate_dim;
