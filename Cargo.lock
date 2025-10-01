@@ -1568,6 +1568,7 @@ dependencies = [
 name = "pretraining-data"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "serde_json",
  "tempfile",
 ]
@@ -2260,6 +2261,7 @@ dependencies = [
  "pretraining-data",
  "prost",
  "rand 0.8.5",
+ "rayon",
  "serde",
  "serde_json",
  "serde_yaml",
