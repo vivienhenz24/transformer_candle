@@ -39,7 +39,7 @@ main() {
     local dataset_id="${HF_DATASET_ID:-HuggingFaceFW/fineweb}"
     local dataset_dir="${DATASET_DIR:-/workspace/datasets/fineweb}"
     local shards_dir="${SHARDS_DIR:-/workspace/tmp_streaming_shards}"
-    local lines_per_shard="${LINES_PER_SHARD:-100000}"
+    local lines_per_shard="${LINES_PER_SHARD:-600000}"
     local hf_workers="${HF_MAX_WORKERS:-32}"
     local parquet_limit="${HF_PARQUET_LIMIT:-20}"
     local vocab_size="${VOCAB_SIZE:-50000}"
@@ -263,8 +263,9 @@ generate_training_config() {
     local tokenizer_max_lines="$4"
 
     log "Generating training config"
-    RUN_ROOT="$run_root" SHARDS_DIR="$shards_dir" \ 
-    python3 - <<'PY'
+    RUN_ROOT="$run_root" \
+    SHARDS_DIR="$shards_dir" \
+    python3 <<'PY'
 import os
 import sys
 from pathlib import Path
