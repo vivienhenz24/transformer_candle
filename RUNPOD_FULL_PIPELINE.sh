@@ -5,7 +5,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 log() {
-    echo "[$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")] $*"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
 }
 
 require_root() {
@@ -41,8 +41,8 @@ main() {
     local split="${DATASET_SPLIT:-train}"
     local vocab_size="${VOCAB_SIZE:-50000}"
     local tokenizer_max_lines="${TOKENIZER_MAX_LINES:-1000000}"
-    local stream_batch_size="${STREAM_BATCH_SIZE:-1000}"
-    local stream_max_samples="${STREAM_MAX_SAMPLES:-}"
+    local stream_batch_size="${STREAM_BATCH_SIZE:-4000}"
+    local stream_max_samples="${STREAM_MAX_SAMPLES:-8500000}"
     local cache_root="/workspace/cache/$run_name"
     local hf_cache_root="/workspace/hf_cache"
     local placeholder_shard="/workspace/tmp_streaming_shards/.placeholder"
@@ -239,7 +239,7 @@ optimizer:
   max_grad_norm: 1.0
 
 scheduler:
-  strategy: cosine_with_warmup
+  strategy: cosine-with-warmup
   warmup_steps: 2000
   total_steps: 500000
   total_epochs: null
