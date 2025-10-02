@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["metal", "fused"]
+metal = ["candle-core/metal", "candle-nn/metal", "embedding/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "embedding/cuda"]
 fused = []
 
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
-embedding = { path = "../embedding" }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
+embedding = { path = "../embedding", default-features = false }
 log = "0.4"
 
 [dev-dependencies]

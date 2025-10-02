@@ -3,9 +3,15 @@ name = "layers"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["metal"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+cpu = []
+
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
 thiserror = "1.0"
 
 [dev-dependencies]
