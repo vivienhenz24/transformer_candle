@@ -160,16 +160,16 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
     --layers 16
     --heads 8
     --seq-len 1024
-    --batch-size 128
-    --grad-accum 8
-    --steps 3200
+    --batch-size 64
+    --grad-accum 16
+    --steps 6400
     --learning-rate 3e-4
     --weight-decay 0.05
-    --warmup-steps 400
+    --warmup-steps 800
     --schedule cosine-with-warmup
-    --checkpoint-every 200
+    --checkpoint-every 400
     --max-checkpoints 5
-    --evaluate-every 400
+    --evaluate-every 800
     --eval-batches 4
     --log-every 10
     --shuffle-buffer 16384
