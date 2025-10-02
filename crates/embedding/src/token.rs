@@ -155,7 +155,19 @@ impl TokenEmbedding {
             return Ok(());
         }
 
-        let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
+        let (min_id, max_id) = if flat_ids.device().is_cuda() {
+            let values = flat_ids.to_vec1::<i64>()?;
+            if values.is_empty() {
+                return Ok(());
+            }
+            let min_id = *values.iter().min().unwrap();
+            let max_id = *values.iter().max().unwrap();
+            (min_id, max_id)
+        } else {
+            let min_id = flat_ids.min_all()?.to_scalar::<i64>()?;
+            let max_id = flat_ids.max_all()?.to_scalar::<i64>()?;
+            (min_id, max_id)
+        };
 
         if min_id < 0 {
             return Err(Error::Msg(format!(
@@ -164,7 +176,6 @@ impl TokenEmbedding {
             )));
         }
 
-        let max_id = flat_ids.max_all()?.to_scalar::<i64>()?;
         let vocab = self.config.vocab_size as i64;
         if max_id >= vocab {
             return Err(Error::Msg(format!(
