@@ -1,6 +1,6 @@
 ---
 # RunPod streaming configuration (~20.8M parameters)
-# Targets ~4e8 tokens (Chinchilla scaling for 20M params) over 12.5k steps.
+# Targets ~4.2e8 tokens (Chinchilla scaling for 20M params) over 3.2k steps with larger CUDA batches.
 
 model:
   hidden_size: 256
@@ -26,10 +26,10 @@ data:
     - "/workspace/runs/runpod-20m-streaming/data/train_placeholder.txt"
   validation_shards:
     - "/workspace/runs/runpod-20m-streaming/data/val_placeholder.txt"
-  batch_size: 32
-  gradient_accumulation_steps: 32
-  shuffle_buffer_size: 8192
-  num_workers: 4
+  batch_size: 128
+  gradient_accumulation_steps: 8
+  shuffle_buffer_size: 16384
+  num_workers: 8
   cache_dir: "/workspace/runs/runpod-20m-streaming/cache"
   sequence_length: 1024
 
@@ -44,8 +44,8 @@ optimizer:
 
 scheduler:
   strategy: cosine_with_warmup
-  warmup_steps: 1000
-  total_steps: 12500
+  warmup_steps: 400
+  total_steps: 3200
   total_epochs: null
   min_lr: 3.0e-5
   max_lr: null
@@ -56,11 +56,11 @@ runtime:
   log_every_n_steps: 10
   checkpoint:
     directory: "/workspace/runs/runpod-20m-streaming/checkpoints"
-    every_n_steps: 500
+    every_n_steps: 200
     every_n_epochs: null
     max_keep: 5
   evaluation:
-    every_n_steps: 1000
+    every_n_steps: 400
     every_n_epochs: null
     max_batches: 4
     best:

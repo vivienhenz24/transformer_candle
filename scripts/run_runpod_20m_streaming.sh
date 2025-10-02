@@ -91,6 +91,17 @@ PY
   fi
 fi
 
+if [[ "${HF_HUB_ENABLE_HF_TRANSFER:-}" == "1" ]]; then
+  if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import importlib.util
+raise SystemExit(0 if importlib.util.find_spec("hf_transfer") else 1)
+PY
+  then
+    echo "Installing Python dependency: hf_transfer (required for HF_HUB_ENABLE_HF_TRANSFER=1)"
+    "$PYTHON_BIN" -m pip install --upgrade hf_transfer >/dev/null
+  fi
+fi
+
 export PYTHON_BIN
 
 CONFIG_TEMPLATE="$REPO_ROOT/configs/runpod_20m_streaming.yaml"
@@ -149,20 +160,20 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
     --layers 16
     --heads 8
     --seq-len 1024
-    --batch-size 32
-    --grad-accum 32
-    --steps 12500
+    --batch-size 128
+    --grad-accum 8
+    --steps 3200
     --learning-rate 3e-4
     --weight-decay 0.05
-    --warmup-steps 1000
+    --warmup-steps 400
     --schedule cosine-with-warmup
-    --checkpoint-every 500
+    --checkpoint-every 200
     --max-checkpoints 5
-    --evaluate-every 1000
+    --evaluate-every 400
     --eval-batches 4
     --log-every 10
-    --shuffle-buffer 8192
-    --loader-workers 4
+    --shuffle-buffer 16384
+    --loader-workers 8
     --precision bf16
     --seed 42
     --tokenizer-seed 42
@@ -174,8 +185,7 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
 
   cargo run --release -p training --no-default-features --features cuda --bin orchestrate -- "${ORCH_ARGS[@]}"
 
-  unset ORCHESTRATE_RUNS_ROOT ORCHESTRATE_CACHE_ROOT ORCHESTRATE_TOKENIZER_ROOT \\
-    ORCHESTRATE_TRAIN_ROOT ORCHESTRATE_VAL_ROOT ORCHESTRATE_HF_CACHE_ROOT
+  unset ORCHESTRATE_RUNS_ROOT ORCHESTRATE_CACHE_ROOT ORCHESTRATE_TOKENIZER_ROOT ORCHESTRATE_TRAIN_ROOT ORCHESTRATE_VAL_ROOT ORCHESTRATE_HF_CACHE_ROOT
 else
   echo "Found existing tokenizer at $TOKENIZER_JSON; skipping tokenizer training"
 fi
