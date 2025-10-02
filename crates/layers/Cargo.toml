@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["cuda"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["cuda"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
 thiserror = "1.0"
 
 [dev-dependencies]

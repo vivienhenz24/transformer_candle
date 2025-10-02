@@ -7,5 +7,5 @@ edition = "2021"
 attention = { path = "../attention", features = ["fused"] }
 embedding = { path = "../embedding" }
 layers = { path = "../layers" }
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["cuda"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
 log = "0.4"

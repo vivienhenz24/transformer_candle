@@ -31,6 +31,36 @@ const CLOUD_RUNS_ROOT: &str = "/workspace/runs";
 const CLOUD_CACHE_ROOT: &str = "/workspace/cache";
 const CLOUD_HF_CACHE_ROOT: &str = "/workspace/hf_cache";
 
+fn path_from_env(key: &str, default: &str) -> PathBuf {
+    env::var(key)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(default))
+}
+
+fn runs_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_RUNS_ROOT", CLOUD_RUNS_ROOT)
+}
+
+fn cache_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_CACHE_ROOT", CLOUD_CACHE_ROOT)
+}
+
+fn tokenizer_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_TOKENIZER_ROOT", CLOUD_TOKENIZER_ROOT)
+}
+
+fn train_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_TRAIN_ROOT", CLOUD_TRAIN_ROOT)
+}
+
+fn val_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_VAL_ROOT", CLOUD_VAL_ROOT)
+}
+
+fn hf_cache_root() -> PathBuf {
+    path_from_env("ORCHESTRATE_HF_CACHE_ROOT", CLOUD_HF_CACHE_ROOT)
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "orchestrate",
@@ -522,15 +552,15 @@ fn run_cloud(args: Args, train_source: PathBuf, validation_source: PathBuf) -> R
     let run_dir = args
         .run_dir
         .clone()
-        .unwrap_or_else(|| Path::new(CLOUD_RUNS_ROOT).join(&experiment));
+        .unwrap_or_else(|| runs_root().join(&experiment));
     configure_hf_cache()?;
     let artifacts = prepare_artifacts(&args, run_dir)?;
 
     let datasets = prepare_cloud_datasets(&args, &experiment, &train_source, &validation_source)?;
 
-    let cache_dir = Path::new(CLOUD_CACHE_ROOT).join(&experiment);
+    let cache_dir = cache_root().join(&experiment);
     fs::create_dir_all(&cache_dir)?;
-    let shared_tokenizer_dir = Path::new(CLOUD_TOKENIZER_ROOT).join(&experiment);
+    let shared_tokenizer_dir = tokenizer_root().join(&experiment);
 
     let data = PipelineData {
         train_shards: datasets.train_shards,
@@ -554,14 +584,14 @@ fn run_streaming(args: Args) -> Result<()> {
     let run_dir = args
         .run_dir
         .clone()
-        .unwrap_or_else(|| Path::new(CLOUD_RUNS_ROOT).join(&experiment));
+        .unwrap_or_else(|| runs_root().join(&experiment));
 
     configure_hf_cache()?;
     let artifacts = prepare_artifacts(&args, run_dir)?;
 
-    let cache_dir = Path::new(CLOUD_CACHE_ROOT).join(&experiment);
+    let cache_dir = cache_root().join(&experiment);
     fs::create_dir_all(&cache_dir)?;
-    let shared_tokenizer_dir = Path::new(CLOUD_TOKENIZER_ROOT).join(&experiment);
+    let shared_tokenizer_dir = tokenizer_root().join(&experiment);
     fs::create_dir_all(&shared_tokenizer_dir)?;
 
     // Train or load tokenizer using streaming data
@@ -628,14 +658,14 @@ struct TokenizerOutcome {
 }
 
 fn configure_hf_cache() -> Result<()> {
-    let cache_root = Path::new(CLOUD_HF_CACHE_ROOT);
-    fs::create_dir_all(cache_root)?;
+    let cache_root = hf_cache_root();
+    fs::create_dir_all(&cache_root)?;
     let datasets_cache = cache_root.join("datasets");
     let hub_cache = cache_root.join("hub");
     fs::create_dir_all(&datasets_cache)?;
     fs::create_dir_all(&hub_cache)?;
 
-    env::set_var("HF_HOME", cache_root);
+    env::set_var("HF_HOME", &cache_root);
     env::set_var("HF_DATASETS_CACHE", &datasets_cache);
     env::set_var("HF_HUB_CACHE", &hub_cache);
 
@@ -817,7 +847,7 @@ fn prepare_cloud_datasets(
     train_source: &Path,
     validation_source: &Path,
 ) -> Result<CloudDatasets> {
-    let train_dir = Path::new(CLOUD_TRAIN_ROOT).join(experiment);
+    let train_dir = train_root().join(experiment);
     let train_shards = materialize_shards(
         train_source,
         &train_dir,
@@ -827,7 +857,7 @@ fn prepare_cloud_datasets(
         args.force_reshard,
     )?;
 
-    let val_dir = Path::new(CLOUD_VAL_ROOT).join(experiment);
+    let val_dir = val_root().join(experiment);
     let validation_shards = if train_source == validation_source {
         mirror_shards(
             &train_shards,

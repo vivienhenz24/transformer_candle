@@ -1,0 +1,6 @@
+{
+  "dataset": "HuggingFaceFW/fineweb",
+  "split": "train",
+  "max_samples": 600000,
+  "stream_batch_size": 512
+}
