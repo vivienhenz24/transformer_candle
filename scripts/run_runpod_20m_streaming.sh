@@ -174,7 +174,7 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
     --log-every 10
     --shuffle-buffer 16384
     --loader-workers 8
-    --precision bf16
+    --precision fp32
     --seed 42
     --tokenizer-seed 42
   )

@@ -52,7 +52,7 @@ scheduler:
 
 runtime:
   seed: 42
-  precision: bf16
+  precision: fp32
   log_every_n_steps: 10
   checkpoint:
     directory: "/workspace/runs/runpod-20m-streaming/checkpoints"
