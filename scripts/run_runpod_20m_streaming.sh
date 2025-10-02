@@ -26,18 +26,24 @@ case "$PROFILE" in
     INTERMEDIATE_SIZE=1024
     NUM_LAYERS=16
     NUM_HEADS=8
-    GLOBAL_BATCH=64
-    GRAD_ACCUM=16
-    TOTAL_STEPS=6400
-    WARMUP_STEPS=800
-    CHECKPOINT_EVERY=400
-    EVALUATE_EVERY=800
+    BASE_GLOBAL_BATCH=64
+    BASE_GRAD_ACCUM=16
+    BASE_TOTAL_STEPS=6400
+    BASE_WARMUP_STEPS=800
+    BASE_CHECKPOINT_EVERY=400
+    BASE_EVALUATE_EVERY=800
     LOG_EVERY=10
     SHUFFLE_BUFFER=16384
     LOADER_WORKERS=8
     DATASET="${DATASET:-HuggingFaceFW/fineweb}"
     SPLIT="${SPLIT:-train}"
     VOCAB_SIZE="${VOCAB_SIZE:-32000}"
+    GLOBAL_BATCH=$BASE_GLOBAL_BATCH
+    GRAD_ACCUM=$BASE_GRAD_ACCUM
+    TOTAL_STEPS=$BASE_TOTAL_STEPS
+    WARMUP_STEPS=$BASE_WARMUP_STEPS
+    CHECKPOINT_EVERY=$BASE_CHECKPOINT_EVERY
+    EVALUATE_EVERY=$BASE_EVALUATE_EVERY
     ;;
   400m)
     DEFAULT_RUN_NAME="runpod-400m-streaming"
@@ -50,24 +56,64 @@ case "$PROFILE" in
     INTERMEDIATE_SIZE=4096
     NUM_LAYERS=30
     NUM_HEADS=16
-    GLOBAL_BATCH=48
-    GRAD_ACCUM=48
-    TOTAL_STEPS=20000
-    WARMUP_STEPS=2000
-    CHECKPOINT_EVERY=1000
-    EVALUATE_EVERY=2000
+    BASE_GLOBAL_BATCH=48
+    BASE_GRAD_ACCUM=48
+    BASE_TOTAL_STEPS=20000
+    BASE_WARMUP_STEPS=2000
+    BASE_CHECKPOINT_EVERY=1000
+    BASE_EVALUATE_EVERY=2000
     LOG_EVERY=20
     SHUFFLE_BUFFER=65536
     LOADER_WORKERS=8
     DATASET="${DATASET:-HuggingFaceFW/fineweb}"
     SPLIT="${SPLIT:-train}"
     VOCAB_SIZE="${VOCAB_SIZE:-32000}"
+    GLOBAL_BATCH=$BASE_GLOBAL_BATCH
+    GRAD_ACCUM=$BASE_GRAD_ACCUM
+    TOTAL_STEPS=$BASE_TOTAL_STEPS
+    WARMUP_STEPS=$BASE_WARMUP_STEPS
+    CHECKPOINT_EVERY=$BASE_CHECKPOINT_EVERY
+    EVALUATE_EVERY=$BASE_EVALUATE_EVERY
     ;;
   *)
     echo "Unsupported MODEL_PROFILE '$PROFILE'. Supported profiles: 20m, 400m." >&2
     exit 1
     ;;
 esac
+
+if [[ "$PROFILE" == "400m" ]]; then
+  GPU_MEM_TOTAL=""
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_MEM_TOTAL=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1 || true)
+  fi
+
+  if [[ -n "$GPU_MEM_TOTAL" ]]; then
+    if [[ "$GPU_MEM_TOTAL" =~ ^[0-9]+$ ]]; then
+      if (( GPU_MEM_TOTAL < 24000 )); then
+        echo "Detected GPU memory ${GPU_MEM_TOTAL} MiB < 24 GiB; the 400M profile requires at least 24 GiB." >&2
+        echo "Please switch to the 20M profile or attach a larger GPU." >&2
+        exit 1
+      elif (( GPU_MEM_TOTAL < 36000 )); then
+        GLOBAL_BATCH=16
+        GRAD_ACCUM=16
+      elif (( GPU_MEM_TOTAL < 64000 )); then
+        GLOBAL_BATCH=24
+        GRAD_ACCUM=24
+      else
+        GLOBAL_BATCH=$BASE_GLOBAL_BATCH
+        GRAD_ACCUM=$BASE_GRAD_ACCUM
+      fi
+    fi
+  fi
+
+  if (( GLOBAL_BATCH != BASE_GLOBAL_BATCH )); then
+    TOTAL_STEPS=$(( BASE_TOTAL_STEPS * BASE_GLOBAL_BATCH / GLOBAL_BATCH ))
+    WARMUP_STEPS=$(( BASE_WARMUP_STEPS * BASE_GLOBAL_BATCH / GLOBAL_BATCH ))
+    CHECKPOINT_EVERY=$(( BASE_CHECKPOINT_EVERY * BASE_GLOBAL_BATCH / GLOBAL_BATCH ))
+    EVALUATE_EVERY=$(( BASE_EVALUATE_EVERY * BASE_GLOBAL_BATCH / GLOBAL_BATCH ))
+    echo "Adjusted 400M profile for ${GPU_MEM_TOTAL:-unknown} MiB GPU: global_batch=${GLOBAL_BATCH}, grad_accum=${GRAD_ACCUM}, total_steps=${TOTAL_STEPS}" >&2
+  fi
+fi
 
 RUN_NAME="${DEFAULT_RUN_NAME}"
 declare -a TRAIN_ARGS=()
@@ -129,17 +175,17 @@ DEPS_SENTINEL="$VENV_DIR/.deps-installed"
 if [[ ! -f "$DEPS_SENTINEL" ]]; then
   echo "Installing Python dependencies (datasets, huggingface_hub)"
   "$PYTHON_BIN" -m pip install --upgrade pip >/dev/null
-  "$PYTHON_BIN" -m pip install --upgrade datasets huggingface_hub >/dev/null
+  "$PYTHON_BIN" -m pip install --upgrade datasets huggingface_hub pyyaml >/dev/null
   touch "$DEPS_SENTINEL"
 else
   if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import importlib.util
-missing = [m for m in ("datasets", "huggingface_hub") if importlib.util.find_spec(m) is None]
+missing = [m for m in ("datasets", "huggingface_hub", "yaml") if importlib.util.find_spec(m) is None]
 raise SystemExit(0 if not missing else 1)
 PY
   then
     echo "Updating Python dependencies (datasets, huggingface_hub)"
-    "$PYTHON_BIN" -m pip install --upgrade datasets huggingface_hub >/dev/null
+    "$PYTHON_BIN" -m pip install --upgrade datasets huggingface_hub pyyaml >/dev/null
   fi
 fi
 
@@ -258,16 +304,49 @@ export CONFIG_ENV_TEMPLATE="$CONFIG_TEMPLATE"
 export CONFIG_ENV_OUTPUT="$RUN_ROOT/training.yaml"
 export CONFIG_ENV_BASE="$BASE_PREFIX"
 export CONFIG_ENV_TARGET="$RUN_ROOT_ABS"
+export CONFIG_ENV_BATCH="$GLOBAL_BATCH"
+export CONFIG_ENV_GRAD_ACCUM="$GRAD_ACCUM"
+export CONFIG_ENV_TOTAL_STEPS="$TOTAL_STEPS"
+export CONFIG_ENV_WARMUP_STEPS="$WARMUP_STEPS"
+export CONFIG_ENV_CHECKPOINT_EVERY="$CHECKPOINT_EVERY"
+export CONFIG_ENV_EVALUATE_EVERY="$EVALUATE_EVERY"
+export CONFIG_ENV_LOG_EVERY="$LOG_EVERY"
 "$PYTHON_BIN" - <<'PY'
 import os
 from pathlib import Path
+import yaml
 
 template_path = Path(os.environ["CONFIG_ENV_TEMPLATE"])
 output_path = Path(os.environ["CONFIG_ENV_OUTPUT"])
 base = os.environ["CONFIG_ENV_BASE"]
 target = os.environ["CONFIG_ENV_TARGET"]
-text = template_path.read_text()
-output_path.write_text(text.replace(base, target))
+cfg = yaml.safe_load(template_path.read_text())
+
+def replace_path(value):
+    if isinstance(value, str):
+        return value.replace(base, target)
+    return value
+
+cfg["tokenizer"]["tokenizer_json"] = replace_path(cfg["tokenizer"]["tokenizer_json"])
+cfg["tokenizer"]["special_tokens"] = replace_path(cfg["tokenizer"]["special_tokens"])
+
+cfg["data"]["train_shards"] = [replace_path(path) for path in cfg["data"]["train_shards"]]
+cfg["data"]["validation_shards"] = [replace_path(path) for path in cfg["data"]["validation_shards"]]
+cfg["data"]["cache_dir"] = replace_path(cfg["data"].get("cache_dir"))
+
+cfg["runtime"]["checkpoint"]["directory"] = replace_path(cfg["runtime"]["checkpoint"]["directory"])
+cfg["runtime"]["evaluation"]["best"]["directory"] = replace_path(cfg["runtime"]["evaluation"]["best"]["directory"])
+cfg["runtime"]["logging"]["tensorboard"] = replace_path(cfg["runtime"]["logging"]["tensorboard"])
+
+cfg["data"]["batch_size"] = int(os.environ["CONFIG_ENV_BATCH"])
+cfg["data"]["gradient_accumulation_steps"] = int(os.environ["CONFIG_ENV_GRAD_ACCUM"])
+cfg["scheduler"]["total_steps"] = int(os.environ["CONFIG_ENV_TOTAL_STEPS"])
+cfg["scheduler"]["warmup_steps"] = int(os.environ["CONFIG_ENV_WARMUP_STEPS"])
+cfg["runtime"]["checkpoint"]["every_n_steps"] = int(os.environ["CONFIG_ENV_CHECKPOINT_EVERY"])
+cfg["runtime"]["evaluation"]["every_n_steps"] = int(os.environ["CONFIG_ENV_EVALUATE_EVERY"])
+cfg["runtime"]["log_every_n_steps"] = int(os.environ["CONFIG_ENV_LOG_EVERY"])
+
+output_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 PY
 
 if [[ ! -f "$RUN_ROOT/streaming_config.json" ]]; then

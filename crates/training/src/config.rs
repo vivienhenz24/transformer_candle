@@ -270,7 +270,7 @@ impl TrainingConfig {
             attn_dropout_p: None,
             residual_dropout_p: None,
             gradient_checkpointing: true, // Enable by default for memory efficiency
-            checkpoint_every_n_layers: 2, // Checkpoint every 2 layers
+            checkpoint_every_n_layers: 1, // Checkpoint every layer to minimise activation memory
         };
 
         let overrides = ModelConfigOverrides {
