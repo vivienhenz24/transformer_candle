@@ -4,14 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["metal"]
 long-context = []
+metal = ["candle-core/metal", "candle-nn/metal", "layers/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "layers/cuda"]
 
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", features = ["metal"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.9.1", default-features = false }
 log = "0.4"
-layers = { path = "../layers" }
+layers = { path = "../layers", default-features = false }
 
 [dev-dependencies]
 criterion = "0.5"

@@ -172,7 +172,7 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
     ORCH_ARGS+=(--max-samples "$MAX_STREAM_SAMPLES")
   fi
 
-  cargo run --release -p training --bin orchestrate -- "${ORCH_ARGS[@]}"
+  cargo run --release -p training --no-default-features --features cuda --bin orchestrate -- "${ORCH_ARGS[@]}"
 
   unset ORCHESTRATE_RUNS_ROOT ORCHESTRATE_CACHE_ROOT ORCHESTRATE_TOKENIZER_ROOT \\
     ORCHESTRATE_TRAIN_ROOT ORCHESTRATE_VAL_ROOT ORCHESTRATE_HF_CACHE_ROOT
@@ -218,11 +218,11 @@ fi
 echo "Config ready at $RUN_ROOT/training.yaml"
 
 echo "Building training binary (release)"
-cargo build --release -p training
+cargo build --release -p training --no-default-features --features cuda
 
 echo "Starting training"
 if ((${#TRAIN_ARGS[@]} > 0)); then
-  cargo run --release -p training --bin train -- --config "$RUN_ROOT/training.yaml" "${TRAIN_ARGS[@]}"
+  cargo run --release -p training --no-default-features --features cuda --bin train -- --config "$RUN_ROOT/training.yaml" "${TRAIN_ARGS[@]}"
 else
-  cargo run --release -p training --bin train -- --config "$RUN_ROOT/training.yaml"
+  cargo run --release -p training --no-default-features --features cuda --bin train -- --config "$RUN_ROOT/training.yaml"
 fi
