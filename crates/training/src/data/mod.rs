@@ -343,24 +343,20 @@ impl StreamingTextDataLoader {
             }
         }
 
-        let tokens_u32: Vec<u32> = tokens;
+        let tokens_i64: Vec<i64> = tokens.into_iter().map(|t| t as i64).collect();
         let mask_u32: Vec<u32> = mask;
 
         let cpu_device = Device::Cpu;
 
-        let batch_tokens = Tensor::from_slice(
-            &tokens_u32,
-            (self.micro_batch_size, target_len),
-            &cpu_device,
-        )
-        .and_then(|t| t.to_dtype(DType::I64))
-        .and_then(|t| t.to_device(&self.device))
-        .map_err(|err| {
-            TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
-        })?;
+        let batch_tokens =
+            Tensor::from_vec(tokens_i64, (self.micro_batch_size, target_len), &cpu_device)
+                .and_then(|t| t.to_device(&self.device))
+                .map_err(|err| {
+                    TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
+                })?;
 
         let batch_mask =
-            Tensor::from_slice(&mask_u32, (self.micro_batch_size, target_len), &cpu_device)
+            Tensor::from_vec(mask_u32, (self.micro_batch_size, target_len), &cpu_device)
                 .and_then(|t| t.to_device(&self.device))
                 .map_err(|err| {
                     TrainingError::runtime(format!(
