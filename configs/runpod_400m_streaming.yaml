@@ -25,8 +25,8 @@ data:
     - "/workspace/runs/runpod-400m-streaming/data/train_placeholder.txt"
   validation_shards:
     - "/workspace/runs/runpod-400m-streaming/data/val_placeholder.txt"
-  batch_size: 96
-  gradient_accumulation_steps: 24
+  batch_size: 48
+  gradient_accumulation_steps: 48
   shuffle_buffer_size: 65536
   num_workers: 8
   cache_dir: "/workspace/runs/runpod-400m-streaming/cache"
@@ -43,8 +43,8 @@ optimizer:
 
 scheduler:
   strategy: cosine_with_warmup
-  warmup_steps: 1000
-  total_steps: 10000
+  warmup_steps: 2000
+  total_steps: 20000
   total_epochs: null
   min_lr: 3.0e-5
   max_lr: null
@@ -55,11 +55,11 @@ runtime:
   log_every_n_steps: 20
   checkpoint:
     directory: "/workspace/runs/runpod-400m-streaming/checkpoints"
-    every_n_steps: 500
+    every_n_steps: 1000
     every_n_epochs: null
     max_keep: 5
   evaluation:
-    every_n_steps: 1000
+    every_n_steps: 2000
     every_n_epochs: null
     max_batches: 4
     best:
