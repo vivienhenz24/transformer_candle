@@ -1,4 +1,5 @@
 use std::{
+    env,
     io::{self, BufWriter, Write},
     path::PathBuf,
     str::FromStr,
@@ -304,8 +305,21 @@ fn run_streaming_training(
     // This is a hybrid approach: stream from HF, write temp files, use existing Trainer
     println!("📥 Streaming data from HuggingFace...");
 
-    let temp_dir = std::path::PathBuf::from("/workspace/tmp_streaming_shards");
-    fs::create_dir_all(&temp_dir)?;
+    let temp_dir = env::var("STREAMING_TMP_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            streaming_config_path
+                .parent()
+                .map(|dir| dir.join("tmp_streaming_shards"))
+                .unwrap_or_else(|| PathBuf::from("tmp_streaming_shards"))
+        });
+    fs::create_dir_all(&temp_dir).map_err(|err| {
+        TrainingError::runtime(format!(
+            "failed to create temp shard directory {}: {}",
+            temp_dir.display(),
+            err
+        ))
+    })?;
 
     let corpus = HuggingFaceStreamingCorpus::new(
         dataset.to_string(),

@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use candle_core::{Device, Tensor, DType};
+use candle_core::{DType, Device, Tensor};
 use futures::future::BoxFuture;
 use pretraining_data::corpora::StreamingCorpus;
 use pretraining_data::TextCorpus;
@@ -264,9 +264,6 @@ impl StreamingTextDataLoader {
 
         // Add to queue
         for ids in tokenized {
-            if let (Some(min), Some(max)) = (ids.iter().min(), ids.iter().max()) {
-                println!("debug tokens range: min={} max={}", min, max);
-            }
             self.document_queue.push_back(ids);
         }
 
@@ -351,21 +348,26 @@ impl StreamingTextDataLoader {
 
         let cpu_device = Device::Cpu;
 
-        let batch_tokens = Tensor::from_slice(&tokens_u32, (self.micro_batch_size, target_len), &cpu_device)
-            .and_then(|t| t.to_dtype(DType::I64))
-            .and_then(|t| t.to_device(&self.device))
-            .map_err(|err| {
-                TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
-            })?;
+        let batch_tokens = Tensor::from_slice(
+            &tokens_u32,
+            (self.micro_batch_size, target_len),
+            &cpu_device,
+        )
+        .and_then(|t| t.to_dtype(DType::I64))
+        .and_then(|t| t.to_device(&self.device))
+        .map_err(|err| {
+            TrainingError::runtime(format!("failed to materialize token tensor: {}", err))
+        })?;
 
-        let batch_mask = Tensor::from_slice(&mask_u32, (self.micro_batch_size, target_len), &cpu_device)
-            .and_then(|t| t.to_device(&self.device))
-            .map_err(|err| {
-                TrainingError::runtime(format!(
-                    "failed to materialize attention mask tensor: {}",
-                    err
-                ))
-            })?;
+        let batch_mask =
+            Tensor::from_slice(&mask_u32, (self.micro_batch_size, target_len), &cpu_device)
+                .and_then(|t| t.to_device(&self.device))
+                .map_err(|err| {
+                    TrainingError::runtime(format!(
+                        "failed to materialize attention mask tensor: {}",
+                        err
+                    ))
+                })?;
 
         let micro_batch_index = self.micro_batch_index;
         let micro_batches_per_step = self.micro_batches_per_step;

@@ -1,0 +1,72 @@
+---
+# RunPod streaming configuration (~20.8M parameters)
+# Targets ~4e8 tokens (Chinchilla scaling for 20M params) over 12.5k steps.
+
+model:
+  hidden_size: 256
+  intermediate_size: 1024
+  num_layers: 16
+  num_attention_heads: 8
+  num_key_value_heads: 8
+  max_position_embeddings: 1024
+  attn_dropout: 0.05
+  residual_dropout: 0.05
+  rope_mode: on_the_fly
+  rope_theta: null
+
+tokenizer:
+  tokenizer_json: "/workspace/runs/runpod-20m-streaming/tokenizer/tokenizer.json"
+  vocab: null
+  merges: null
+  special_tokens: "/workspace/runs/runpod-20m-streaming/tokenizer/special_tokens.txt"
+
+data:
+  # Placeholder shards are required for validation; streaming pipeline overwrites them.
+  train_shards:
+    - "/workspace/runs/runpod-20m-streaming/data/train_placeholder.txt"
+  validation_shards:
+    - "/workspace/runs/runpod-20m-streaming/data/val_placeholder.txt"
+  batch_size: 32
+  gradient_accumulation_steps: 32
+  shuffle_buffer_size: 8192
+  num_workers: 4
+  cache_dir: "/workspace/runs/runpod-20m-streaming/cache"
+  sequence_length: 1024
+
+optimizer:
+  algorithm: adam_w
+  learning_rate: 3.0e-4
+  weight_decay: 0.05
+  beta1: 0.9
+  beta2: 0.95
+  epsilon: 1.0e-8
+  max_grad_norm: 1.0
+
+scheduler:
+  strategy: cosine_with_warmup
+  warmup_steps: 1000
+  total_steps: 12500
+  total_epochs: null
+  min_lr: 3.0e-5
+  max_lr: null
+
+runtime:
+  seed: 42
+  precision: bf16
+  log_every_n_steps: 10
+  checkpoint:
+    directory: "/workspace/runs/runpod-20m-streaming/checkpoints"
+    every_n_steps: 500
+    every_n_epochs: null
+    max_keep: 5
+  evaluation:
+    every_n_steps: 1000
+    every_n_epochs: null
+    max_batches: 4
+    best:
+      directory: "/workspace/runs/runpod-20m-streaming/best"
+      max_keep: 1
+  logging:
+    enable_stdout: true
+    tensorboard: "/workspace/runs/runpod-20m-streaming/tensorboard"
+    tensorboard_flush_every_n: 25
