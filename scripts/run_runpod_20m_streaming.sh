@@ -12,7 +12,64 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-RUN_NAME="runpod-20m-streaming"
+PROFILE="${MODEL_PROFILE:-20m}"
+
+case "$PROFILE" in
+  20m)
+    DEFAULT_RUN_NAME="runpod-20m-streaming"
+    CONFIG_TEMPLATE="$REPO_ROOT/configs/runpod_20m_streaming.yaml"
+    STREAM_TEMPLATE="$REPO_ROOT/configs/runpod_20m_streaming_config.json"
+    STREAM_BATCH_SIZE="${STREAM_BATCH_SIZE:-512}"
+    MAX_STREAM_SAMPLES="${MAX_STREAM_SAMPLES:-600000}"
+    TOKENIZER_MAX_LINES="${TOKENIZER_MAX_LINES:-600000}"
+    HIDDEN_SIZE=256
+    INTERMEDIATE_SIZE=1024
+    NUM_LAYERS=16
+    NUM_HEADS=8
+    GLOBAL_BATCH=64
+    GRAD_ACCUM=16
+    TOTAL_STEPS=6400
+    WARMUP_STEPS=800
+    CHECKPOINT_EVERY=400
+    EVALUATE_EVERY=800
+    LOG_EVERY=10
+    SHUFFLE_BUFFER=16384
+    LOADER_WORKERS=8
+    DATASET="${DATASET:-HuggingFaceFW/fineweb}"
+    SPLIT="${SPLIT:-train}"
+    VOCAB_SIZE="${VOCAB_SIZE:-32000}"
+    ;;
+  400m)
+    DEFAULT_RUN_NAME="runpod-400m-streaming"
+    CONFIG_TEMPLATE="$REPO_ROOT/configs/runpod_400m_streaming.yaml"
+    STREAM_TEMPLATE="$REPO_ROOT/configs/runpod_400m_streaming_config.json"
+    STREAM_BATCH_SIZE="${STREAM_BATCH_SIZE:-768}"
+    MAX_STREAM_SAMPLES="${MAX_STREAM_SAMPLES:-2500000}"
+    TOKENIZER_MAX_LINES="${TOKENIZER_MAX_LINES:-1200000}"
+    HIDDEN_SIZE=1024
+    INTERMEDIATE_SIZE=4096
+    NUM_LAYERS=30
+    NUM_HEADS=16
+    GLOBAL_BATCH=96
+    GRAD_ACCUM=24
+    TOTAL_STEPS=10000
+    WARMUP_STEPS=1000
+    CHECKPOINT_EVERY=500
+    EVALUATE_EVERY=1000
+    LOG_EVERY=20
+    SHUFFLE_BUFFER=65536
+    LOADER_WORKERS=8
+    DATASET="${DATASET:-HuggingFaceFW/fineweb}"
+    SPLIT="${SPLIT:-train}"
+    VOCAB_SIZE="${VOCAB_SIZE:-32000}"
+    ;;
+  *)
+    echo "Unsupported MODEL_PROFILE '$PROFILE'. Supported profiles: 20m, 400m." >&2
+    exit 1
+    ;;
+esac
+
+RUN_NAME="${DEFAULT_RUN_NAME}"
 declare -a TRAIN_ARGS=()
 if [[ $# -gt 0 && "$1" != "--" && "$1" != -* ]]; then
   RUN_NAME="$1"
@@ -32,12 +89,7 @@ CHECKPOINT_DIR="$RUN_ROOT/checkpoints"
 BEST_DIR="$RUN_ROOT/best"
 TB_DIR="$RUN_ROOT/tensorboard"
 
-DATASET="${DATASET:-HuggingFaceFW/fineweb}"
-SPLIT="${SPLIT:-train}"
-STREAM_BATCH_SIZE="${STREAM_BATCH_SIZE:-512}"
-MAX_STREAM_SAMPLES="${MAX_STREAM_SAMPLES:-600000}"
 VOCAB_SIZE="${VOCAB_SIZE:-32000}"
-TOKENIZER_MAX_LINES="${TOKENIZER_MAX_LINES:-600000}"
 
 BASE_PYTHON="${BASE_PYTHON:-}"
 if [[ -z "$BASE_PYTHON" ]]; then
@@ -104,9 +156,6 @@ fi
 
 export PYTHON_BIN
 
-CONFIG_TEMPLATE="$REPO_ROOT/configs/runpod_20m_streaming.yaml"
-STREAM_TEMPLATE="$REPO_ROOT/configs/runpod_20m_streaming_config.json"
-
 if [[ ! -f "$CONFIG_TEMPLATE" ]]; then
   echo "Expected template config at $CONFIG_TEMPLATE" >&2
   exit 1
@@ -155,25 +204,25 @@ if [[ ! -f "$TOKENIZER_JSON" ]]; then
     --experiment "$RUN_NAME"
     --vocab-size "$VOCAB_SIZE"
     --tokenizer-max-lines "$TOKENIZER_MAX_LINES"
-    --hidden-size 256
-    --intermediate-size 1024
-    --layers 16
-    --heads 8
+    --hidden-size "$HIDDEN_SIZE"
+    --intermediate-size "$INTERMEDIATE_SIZE"
+    --layers "$NUM_LAYERS"
+    --heads "$NUM_HEADS"
     --seq-len 1024
-    --batch-size 64
-    --grad-accum 16
-    --steps 6400
+    --batch-size "$GLOBAL_BATCH"
+    --grad-accum "$GRAD_ACCUM"
+    --steps "$TOTAL_STEPS"
     --learning-rate 3e-4
     --weight-decay 0.05
-    --warmup-steps 800
+    --warmup-steps "$WARMUP_STEPS"
     --schedule cosine-with-warmup
-    --checkpoint-every 400
+    --checkpoint-every "$CHECKPOINT_EVERY"
     --max-checkpoints 5
-    --evaluate-every 800
+    --evaluate-every "$EVALUATE_EVERY"
     --eval-batches 4
-    --log-every 10
-    --shuffle-buffer 16384
-    --loader-workers 8
+    --log-every "$LOG_EVERY"
+    --shuffle-buffer "$SHUFFLE_BUFFER"
+    --loader-workers "$LOADER_WORKERS"
     --precision fp32
     --seed 42
     --tokenizer-seed 42
@@ -202,7 +251,7 @@ cat >"$TOKENIZER_DIR/special_tokens.txt" <<'JSON'
 ]
 JSON
 
-BASE_PREFIX="/workspace/runs/runpod-20m-streaming"
+BASE_PREFIX="/workspace/runs/${DEFAULT_RUN_NAME}"
 RUN_ROOT_ABS="$(cd "$RUN_ROOT" && pwd)"
 
 export CONFIG_ENV_TEMPLATE="$CONFIG_TEMPLATE"
